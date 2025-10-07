@@ -63,8 +63,20 @@ constructor_args:
   - gyro_topic_name: 'bmi088_gyro'
 template_args:
   - MotorType: RMMotorContainer
-required_hardware: []
-depends: []
+required_hardware:
+  - cmd
+  - motor_can1
+  - motor_can2
+  - bmi088
+depends:
+  - cmd
+  - motor_can1
+  - motor_can2
+  - pid
+  - gimbal_cmd_topic_name: 'gimbal_cmd'
+  - accl_topic_name: 'bmi088_accl'
+  - euler_topic_name: 'ahrs_euler'
+  - gyro_topic_name: 'bmi088_gyro'
 === END MANIFEST === */
 // clang-format on
 
@@ -84,9 +96,40 @@ depends: []
 
 #define GIMBAL_MAX_SPEED (M_2PI * 1.5f)
 
+/**
+ * @brief 云台控制应用类
+ *
+ * @tparam MotorType 电机驱动类型
+ */
 template <typename MotorType>
 class Gimbal : public LibXR::Application {
  public:
+  /**
+   * @brief Gimbal 构造函数
+   *
+   * @param hw 硬件容器
+   * @param app 应用管理器
+   * @param cmd 命令模块实例
+   * @param task_stack_depth 任务堆栈深度
+   * @param pid_angle_param_yaw Yaw轴角度环PID参数
+   * @param pid_angle_param_pitch Pitch轴角度环PID参数
+   * @param pid_omega_param_yaw Yaw轴角速度环PID参数
+   * @param pid_omega_param_pitch Pitch轴角速度环PID参数
+   * @param motor_can1 CAN1上的电机实例 (Yaw)
+   * @param motor_can2 CAN2上的电机实例 (Pitch)
+   * @param gimbal_pitch_center_ Pitch轴电机中心(零点)位置
+   * @param gimbal_yaw_center_ Yaw轴电机中心(零点)位置
+   * @param gimbal_max_ Pitch轴最大角度(行程上限)
+   * @param gimbal_min_ Pitch轴最小角度(行程下限)
+   * @param gimbal_pitch_mass_ Pitch轴固连负载的质量 (kg)
+   * @param radius_pitch_to_center_of_mass Pitch轴心到负载重心的向量 (m)
+   * @param radius_yaw_to_pitch Yaw轴心到Pitch轴心的向量 (m)
+   * @param rotation_pitch_from_imu IMU坐标系到Pitch坐标系的旋转矩阵
+   * @param gimbal_cmd_topic_name 云台命令Topic名称
+   * @param accl_topic_name 加速度计数据Topic名称
+   * @param euler_topic_name 欧拉角数据Topic名称
+   * @param gyro_topic_name 陀螺仪数据Topic名称
+   */
   Gimbal(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app, CMD &cmd,
          uint32_t task_stack_depth,
          LibXR::PID<float>::Param pid_angle_param_yaw,
@@ -123,6 +166,12 @@ class Gimbal : public LibXR::Application {
     thread_.Create(this, ThreadFunction, "GimbalThread", task_stack_depth,
                    LibXR::Thread::Priority::MEDIUM);
   }
+
+  /**
+   * @brief 云台控制线程函数，为静态成员函数
+   *
+   * @param gimbal 指向Gimbal实例的指针
+   */
   static void ThreadFunction(Gimbal *gimbal) {
     LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber(
         gimbal->gimbal_cmd_name_);
@@ -164,6 +213,10 @@ class Gimbal : public LibXR::Application {
     }
   }
 
+  /**
+   * @brief 根据外部命令(如遥控器)更新云台的目标设定点
+   *
+   */
   void UpdateSetpointFromCMD() {
     float gimbal_yaw_cmd = cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED;
     float gimbal_pitch_cmd = cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED;
@@ -179,11 +232,19 @@ class Gimbal : public LibXR::Application {
     target_angle_pitch_ += gimbal_pitch_cmd;
   }
 
+  /**
+   * @brief 更新电机状态，通常在主循环中被调用
+   *
+   */
   void Update() {
     motor_can1_.Update(6);
     motor_can2_.Update(5);
   }
 
+  /**
+   * @brief 自我解算函数，获取云台当前的角度和角速度
+   *
+   */
   void SelfResolution() {
     now_angle_pitch_ = motor_can2_.GetAngle(5);
     now_angle_yaw_ = motor_can1_.GetAngle(6);
@@ -191,84 +252,89 @@ class Gimbal : public LibXR::Application {
     now_omega_yaw_ = motor_can1_.GetSpeed(6);
   }
 
+  /**
+   * @brief 根据IMU加速度数据计算重力补偿力矩
+   * @details
+   * 该函数的目标是计算由重力（以及其他外部加速度）在云台Pitch轴和Yaw轴上产生的扰动力矩。
+   * 通过将这些力矩前馈到PID控制器，可以主动抵消重力的影响，使云台在倾斜时也能保持稳定。
+   *
+   * 核心思想:
+   * 1.
+   * 将IMU测量到的加速度（在静止或匀速运动时，主要分量为重力加速度）转换到各个云台部件的坐标系下。
+   * 2. 根据牛顿第二定律 F = ma，计算出作用在负载（如相机）质心上的惯性力
+   * F_disturbance = -m * a_imu。
+   * 3. 根据力矩公式 τ = r × F，计算该惯性力相对于Pitch轴和Yaw轴产生的力矩。
+   *
+   * 坐标系定义:
+   * - IMU系 (I): IMU传感器自身的坐标系。
+   * - Pitch系 (P): 与Pitch轴固连的坐标系，随Pitch轴运动。
+   * - Yaw系 (Y): 与Yaw轴固连的坐标系，随Yaw轴运动。
+   *
+   * @param accl_data_ 从IMU获取的加速度数据 (m/s^2)，在IMU坐标系下表示。
+   */
   void GravityCompensation(Eigen::Matrix<float, 3, 1> &accl_data_) {
-    // 1. 计算从Pitch坐标系(P)到Yaw坐标系(Y)的旋转矩阵
+    // --- 1. 计算坐标系之间的旋转矩阵 ---
+    // 计算从Pitch坐标系(P)到Yaw坐标系(Y)的旋转矩阵。
+    // 这取决于当前Pitch轴的电机角度 now_angle_pitch_。
     const float cos_p = std::cos(now_angle_pitch_);
     const float sin_p = std::sin(now_angle_pitch_);
     LibXR::RotationMatrix<float> rotation_yaw_from_pitch(cos_p, 0, sin_p, 0, 1,
                                                          0, -sin_p, 0, cos_p);
 
-    // 2. 坐标变换 (手动矩阵-向量乘法)
-    // 将IMU加速度从IMU坐标系转换到Pitch坐标系(P)
-    Eigen::Matrix<float, 3, 1> acceleration_in_pitch(
-        rotation_pitch_from_imu_.operator()(0, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(0, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(0, 2) * accl_data_.z(),
-        rotation_pitch_from_imu_.operator()(1, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(1, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(1, 2) * accl_data_.z(),
-        rotation_pitch_from_imu_.operator()(2, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(2, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(2, 2) * accl_data_.z());
+    // --- 2. 将加速度矢量变换到目标坐标系 ---
+    // 将IMU加速度从IMU坐标系(I)转换到Pitch坐标系(P)。
+    // rotation_pitch_from_imu_
+    // 是一个配置参数，代表了IMU相对于Pitch组件的安装姿态。
+    Eigen::Matrix<float, 3, 1> acceleration_in_pitch =
+        rotation_pitch_from_imu_ * accl_data_;
 
-    // 将加速度从Pitch坐标系(P)转换到Yaw坐标系(Y)
-    Eigen::Matrix<float, 3, 1> acceleration_in_yaw(
-        rotation_yaw_from_pitch(0, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(0, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(0, 2) * acceleration_in_pitch.z(),
-        rotation_yaw_from_pitch(1, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(1, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(1, 2) * acceleration_in_pitch.z(),
-        rotation_yaw_from_pitch(2, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(2, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(2, 2) * acceleration_in_pitch.z());
+    // 将加速度从Pitch坐标系(P)转换到Yaw坐标系(Y)。
+    Eigen::Matrix<float, 3, 1> acceleration_in_yaw =
+        rotation_yaw_from_pitch * acceleration_in_pitch;
 
-    // 3. 计算扰动力矩
-    // 扰动力 F_disturbance = -m * a_imu
-    LibXR::Position<float> force_in_pitch(
-        acceleration_in_pitch.x() * -gimbal_pitch_mass_,
-        acceleration_in_pitch.y() * -gimbal_pitch_mass_,
-        acceleration_in_pitch.z() * -gimbal_pitch_mass_);
-    LibXR::Position<float> force_in_yaw(
-        acceleration_in_yaw.x() * -gimbal_pitch_mass_,
-        acceleration_in_yaw.y() * -gimbal_pitch_mass_,
-        acceleration_in_yaw.z() * -gimbal_pitch_mass_);
+    // --- 3. 计算扰动力 ---
+    // 扰动力 F_disturbance = -m * a_imu。
+    // 分别计算在Pitch系和Yaw系下表示的扰动力。
+    LibXR::Position<float> force_in_pitch =
+        -gimbal_pitch_mass_ * acceleration_in_pitch;
+    LibXR::Position<float> force_in_yaw =
+        -gimbal_pitch_mass_ * acceleration_in_yaw;
 
-    // 在Pitch坐标系(P)下计算Pitch轴的扰动力矩 (手动叉乘 n = r x F)
-    LibXR::Position<float> torque_vector_pitch(
-        radius_pitch_to_center_of_mass_.y() * force_in_pitch.z() -
-            radius_pitch_to_center_of_mass_.z() * force_in_pitch.y(),
-        radius_pitch_to_center_of_mass_.z() * force_in_pitch.x() -
-            radius_pitch_to_center_of_mass_.x() * force_in_pitch.z(),
-        radius_pitch_to_center_of_mass_.x() * force_in_pitch.y() -
-            radius_pitch_to_center_of_mass_.y() * force_in_pitch.x());
+    // --- 4. 计算扰动力矩 ---
+    // 在Pitch坐标系(P)下，计算作用在Pitch轴上的扰动力矩。
+    // 力臂 r 是从Pitch轴心到负载重心的向量 (radius_pitch_to_center_of_mass_)。
+    // 力矩 τ = r × F。
+    LibXR::Position<float> torque_vector_pitch =
+        radius_pitch_to_center_of_mass_.cross(force_in_pitch);
 
-    // 在Yaw坐标系(Y)下计算Yaw轴的扰动力矩
-    // 计算力臂 r: 从Yaw轴心到负载重心的向量
-    LibXR::Position<float> radius_pitch_to_center_of_mass_in_yaw(
-        rotation_yaw_from_pitch(0, 0) * radius_pitch_to_center_of_mass_.x(),
-        rotation_yaw_from_pitch(1, 0) * radius_pitch_to_center_of_mass_.x(),
-        rotation_yaw_from_pitch(2, 0) * radius_pitch_to_center_of_mass_.x());
-    LibXR::Position<float> radius_yaw_to_center_of_mass(
-        radius_yaw_to_pitch_.x() + radius_pitch_to_center_of_mass_in_yaw.x(),
-        radius_yaw_to_pitch_.y() + radius_pitch_to_center_of_mass_in_yaw.y(),
-        radius_yaw_to_pitch_.z() + radius_pitch_to_center_of_mass_in_yaw.z());
+    // 在Yaw坐标系(Y)下，计算作用在Yaw轴上的扰动力矩。
+    // 首先，计算总的力臂 r：从Yaw轴心到负载重心的向量。
+    // 这等于 "Yaw轴心到Pitch轴心的向量" +
+    // "Pitch轴心到负载重心的向量（变换到Yaw系下）"。
+    LibXR::Position<float> radius_pitch_to_center_of_mass_in_yaw =
+        rotation_yaw_from_pitch * radius_pitch_to_center_of_mass_;
+    LibXR::Position<float> radius_yaw_to_center_of_mass =
+        radius_yaw_to_pitch_ + radius_pitch_to_center_of_mass_in_yaw;
 
-    // 手动叉乘 n = r x F
-    LibXR::Position<float> torque_vector_yaw(
-        radius_yaw_to_center_of_mass.y() * force_in_yaw.z() -
-            radius_yaw_to_center_of_mass.z() * force_in_yaw.y(),
-        radius_yaw_to_center_of_mass.z() * force_in_yaw.x() -
-            radius_yaw_to_center_of_mass.x() * force_in_yaw.z(),
-        radius_yaw_to_center_of_mass.x() * force_in_yaw.y() -
-            radius_yaw_to_center_of_mass.y() * force_in_yaw.x());
+    // 计算Yaw轴的扰动力矩 τ = r × F。
+    LibXR::Position<float> torque_vector_yaw =
+        radius_yaw_to_center_of_mass.cross(force_in_yaw);
 
-    // Pitch电机绕其自身的Y轴旋转, 取y分量
+    // --- 5. 提取有效力矩分量 ---
+    // Pitch电机绕其自身的Y轴旋转，因此我们只关心力矩向量在Y轴上的分量。
     pitch_torque_ = torque_vector_pitch.y();
-    // Yaw电机绕其自身的Z轴旋转, 取z分量
+    // Yaw电机绕其自身的Z轴旋转，因此我们只关心力矩向量在Z轴上的分量。
     yaw_torque_ = torque_vector_yaw.z();
   }
 
+  /**
+   * @brief 将一个值限制在给定的最大值和最小值之间
+   *
+   * @param x 要限制的值的指针
+   * @param Min 最小值
+   * @param Max 最大值
+   * @return float 限制后的值
+   */
   float Constrain(float *x, float Min, float Max) {
     if (*x < Min) {
       *x = Min;
@@ -278,6 +344,10 @@ class Gimbal : public LibXR::Application {
     return (*x);
   }
 
+  /**
+   * @brief 处理电机角度的周期性，实现最近转置，避免电机在边界处反转
+   *
+   */
   void MotorNearestTransposition() {
     float tmp_delta_angle_ = 0.0f;
     tmp_delta_angle_ = fmod(target_angle_yaw_ - now_angle_yaw_, 2.0f * M_PI);
@@ -293,6 +363,10 @@ class Gimbal : public LibXR::Application {
     target_angle_pitch_ = -motor_can2_.GetAngle(5) + tmp_delta_angle_;
   }
 
+  /**
+   * @brief 计算PID输出并将其应用到电机，实现动力学控制
+   *
+   */
   void OutputToDynamics() {
     MotorNearestTransposition();
 
@@ -316,58 +390,94 @@ class Gimbal : public LibXR::Application {
     motor_can2_.SetCurrent(5, output_pitch);
   }
 
+  /**
+   * @brief 监控函数 (在此应用中未使用)
+   *
+   */
   void OnMonitor() override {}
 
  private:
+  //! 云台命令Topic名称
   const char *gimbal_cmd_name_;
+  //! 加速度计数据Topic名称
   const char *accl_name_;
+  //! 欧拉角数据Topic名称
   const char *euler_name_;
+  //! 陀螺仪数据Topic名称
   const char *gyro_name_;
 
+  //! 当前Yaw轴角度
   float now_angle_yaw_ = 0.0f;
+  //! 当前Pitch轴角度
   float now_angle_pitch_ = 0.0f;
+  //! 目标Yaw轴角度
   float target_angle_yaw_ = 0.0f;
+  //! 目标Pitch轴角度
   float target_angle_pitch_ = 0.0f;
+  //! 当前Yaw轴角速度
   float now_omega_yaw_ = 0.0f;
+  //! 当前Pitch轴角速度
   float now_omega_pitch_ = 0.0f;
+  //! Pitch轴补偿力矩
   float pitch_torque_ = 0.0f;
+  //! Yaw轴补偿力矩
   float yaw_torque_ = 0.0f;
+  //! Pitch轴电机中心(零点)位置
   float gimbal_pitch_center_ = 0.0f;
+  //! Yaw轴电机中心(零点)位置
   float gimbal_yaw_center_ = 0.0f;
+  //! Pitch轴最大角度(行程上限)
   float gimbal_max_ = 0.0f;
+  //! Pitch轴最小角度(行程下限)
   float gimbal_min_ = 0.0f;
 
-  // Pitch轴固连负载的质量 (kg)
+  //! Pitch轴固连负载的质量 (kg)
   const float gimbal_pitch_mass_ = 0.0f;
-  // P系下, Pitch轴心->负载重心 的向量
+  //! P系下, Pitch轴心->负载重心 的向量 (m)
   const LibXR::Position<float> radius_pitch_to_center_of_mass_{0.0f, 0.0f,
                                                                0.0f};
-  // Y系下, Yaw轴心->Pitch轴心 的向量
+  //! Y系下, Yaw轴心->Pitch轴心 的向量 (m)
   const LibXR::Position<float> radius_yaw_to_pitch_{0.0f, 0.0f, 0.0f};
-  // IMU坐标系到Pitch坐标系的旋转矩阵
+  //! IMU坐标系到Pitch坐标系的旋转矩阵
   const LibXR::RotationMatrix<float> rotation_pitch_from_imu_{
       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  //! IMU加速度数据
   const LibXR::Position<float> imu_acceleration_{0.0f, 0.0f, 0.0f};
 
+  //! 电机最大输出电流
   const float max_current_ = 1.0f;
 
+  //! Yaw轴角度环PID控制器
   LibXR::PID<float> pid_angle_yaw_;
+  //! Pitch轴角度环PID控制器
   LibXR::PID<float> pid_angle_pitch_;
+  //! Yaw轴角速度环PID控制器
   LibXR::PID<float> pid_omega_yaw_;
+  //! Pitch轴角速度环PID控制器
   LibXR::PID<float> pid_omega_pitch_;
 
+  //! CAN1上的电机实例 (Yaw)
   Motor<MotorType> &motor_can1_;
+  //! CAN2上的电机实例 (Pitch)
   Motor<MotorType> &motor_can2_;
 
+  //! 命令模块实例
   CMD &cmd_;
+  //! 云台命令数据
   CMD::GimbalCMD cmd_data_;
 
+  //! 云台控制线程
   LibXR::Thread thread_;
 
+  //! 时间间隔 (s)
   LibXR::MicrosecondTimestamp::Duration dt_ = 0;
+  //! 上次在线时间
   LibXR::MicrosecondTimestamp last_online_time_ = 0;
+  //! 当前时间
   LibXR::MicrosecondTimestamp now_ = 0;
 
+  //! 陀螺仪和加速度计数据
   Eigen::Matrix<float, 3, 1> gyro_data_, accl_data_;
+  //! 欧拉角数据
   LibXR::EulerAngle<float> euler_;
 };
