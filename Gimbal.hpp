@@ -89,12 +89,12 @@ depends:
 #include "MadgwickAHRS.hpp"
 #include "Motor.hpp"
 #include "app_framework.hpp"
+#include "inertia.hpp"
 #include "pid.hpp"
 #include "semaphore.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
 #include "transform.hpp"
-#include "semaphore.hpp"
 
 #define GIMBAL_MAX_SPEED (M_2PI * 1.5f)
 
@@ -167,6 +167,18 @@ class Gimbal : public LibXR::Application {
         cmd_(cmd) {
     thread_.Create(this, ThreadFunction, "GimbalThread", task_stack_depth,
                    LibXR::Thread::Priority::MEDIUM);
+
+    Eigen::Matrix<float, 3, 1> r_pitch;
+    r_pitch << radius_pitch_to_center_of_mass_.x(),
+        radius_pitch_to_center_of_mass_.y(),
+        radius_pitch_to_center_of_mass_.z();
+    const float m = gimbal_pitch_mass_;
+    const float r2 = r_pitch.squaredNorm();
+    Eigen::Matrix<float, 3, 3> i_com_pitch_ =
+        m * (r2 * Eigen::Matrix<float, 3, 3>::Identity() -
+             r_pitch * r_pitch.transpose());
+
+    inertia_pitch_ = LibXR::Inertia<float>(m, i_com_pitch_);
   }
 
   /**
@@ -250,6 +262,8 @@ class Gimbal : public LibXR::Application {
    *
    */
   void SelfResolution() {
+    prev_omega_pitch_ = now_omega_pitch_;
+    prev_omega_yaw_ = now_omega_yaw_;
     now_angle_pitch_ = motor_can2_.GetAngle(5);
     now_angle_yaw_ = motor_can1_.GetAngle(6);
     now_omega_pitch_ = motor_can2_.GetSpeed(5);
@@ -259,100 +273,82 @@ class Gimbal : public LibXR::Application {
   /**
    * @brief 根据IMU加速度数据计算重力补偿力矩
    * @details
-   * 该函数的目标是计算由重力（以及其他外部加速度）在云台Pitch轴和Yaw轴上产生的扰动力矩。
-   * 通过将这些力矩前馈到PID控制器，可以主动抵消重力的影响，使云台在倾斜时也能保持稳定。
+   * 计算由重力和外部加速度在云台 Pitch 与 Yaw 轴上产生的前馈补偿力矩，
+   * 并把惯性项（I·α + ω × (I·ω)）加入补偿，以改善动态响应。
    *
    * 核心思想:
-   * 1.
-   * 将IMU测量到的加速度（在静止或匀速运动时，主要分量为重力加速度）转换到各个云台部件的坐标系下。
-   * 2. 根据牛顿第二定律 F = ma，计算出作用在负载（如相机）质心上的惯性力
-   * F_disturbance = -m * a_imu。
-   * 3. 根据力矩公式 τ = r × F，计算该惯性力相对于Pitch轴和Yaw轴产生的力矩。
-   *
-   * 坐标系定义:
-   * - IMU系 (I): IMU传感器自身的坐标系。
-   * - Pitch系 (P): 与Pitch轴固连的坐标系，随Pitch轴运动。
-   * - Yaw系 (Y): 与Yaw轴固连的坐标系，随Yaw轴运动。
+   * 1) 坐标变换：IMU -> Pitch -> Yaw
+   * 2) 力矩计算：τ = r × (-m·a)，取轴向分量
+   * 3) 惯性项：I·α + ω × (I·ω)
+   * 4) 合成：torque = tau_g + tau_i
    *
    * @param accl_data_ 从IMU获取的加速度数据 (m/s^2)，在IMU坐标系下表示。
    */
   void GravityCompensation(Eigen::Matrix<float, 3, 1> &accl_data_) {
-    // 1. 计算从Pitch坐标系(P)到Yaw坐标系(Y)的旋转矩阵
+    // 构造 Pitch->Yaw 旋转矩阵
     const float cos_p = std::cos(now_angle_pitch_);
     const float sin_p = std::sin(now_angle_pitch_);
-    LibXR::RotationMatrix<float> rotation_yaw_from_pitch(cos_p, 0, sin_p, 0, 1,
-                                                         0, -sin_p, 0, cos_p);
+    Eigen::Matrix<float, 3, 3> R_yaw_from_pitch;
+    R_yaw_from_pitch << cos_p, 0.0f, sin_p, 0.0f, 1.0f, 0.0f, -sin_p, 0.0f,
+        cos_p;
 
-    // 2. 坐标变换 (手动矩阵-向量乘法)
-    // 将IMU加速度从IMU坐标系转换到Pitch坐标系(P)
-    Eigen::Matrix<float, 3, 1> acceleration_in_pitch(
-        rotation_pitch_from_imu_.operator()(0, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(0, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(0, 2) * accl_data_.z(),
-        rotation_pitch_from_imu_.operator()(1, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(1, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(1, 2) * accl_data_.z(),
-        rotation_pitch_from_imu_.operator()(2, 0) * accl_data_.x() +
-            rotation_pitch_from_imu_.operator()(2, 1) * accl_data_.y() +
-            rotation_pitch_from_imu_.operator()(2, 2) * accl_data_.z());
+    // 坐标变换：IMU -> Pitch -> Yaw
+    Eigen::Matrix<float, 3, 1> accel_in_pitch =
+        rotation_pitch_from_imu_ * accl_data_;
+    Eigen::Matrix<float, 3, 1> accel_in_yaw = R_yaw_from_pitch * accel_in_pitch;
 
-    // 将加速度从Pitch坐标系(P)转换到Yaw坐标系(Y)
-    Eigen::Matrix<float, 3, 1> acceleration_in_yaw(
-        rotation_yaw_from_pitch(0, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(0, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(0, 2) * acceleration_in_pitch.z(),
-        rotation_yaw_from_pitch(1, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(1, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(1, 2) * acceleration_in_pitch.z(),
-        rotation_yaw_from_pitch(2, 0) * acceleration_in_pitch.x() +
-            rotation_yaw_from_pitch(2, 1) * acceleration_in_pitch.y() +
-            rotation_yaw_from_pitch(2, 2) * acceleration_in_pitch.z());
+    // 质心向量
+    Eigen::Matrix<float, 3, 1> r_pitch;
+    r_pitch << radius_pitch_to_center_of_mass_.x(),
+        radius_pitch_to_center_of_mass_.y(),
+        radius_pitch_to_center_of_mass_.z();
 
-    // 3. 计算扰动力矩
-    // 扰动力 F_disturbance = -m * a_imu
-    LibXR::Position<float> force_in_pitch(
-        acceleration_in_pitch.x() * -gimbal_pitch_mass_,
-        acceleration_in_pitch.y() * -gimbal_pitch_mass_,
-        acceleration_in_pitch.z() * -gimbal_pitch_mass_);
-    LibXR::Position<float> force_in_yaw(
-        acceleration_in_yaw.x() * -gimbal_pitch_mass_,
-        acceleration_in_yaw.y() * -gimbal_pitch_mass_,
-        acceleration_in_yaw.z() * -gimbal_pitch_mass_);
+    // 重力力矩：tau_g = r × (-m·a)
+    float tau_g_pitch =
+        (r_pitch.cross(-gimbal_pitch_mass_ * accel_in_pitch))(1);
 
-    // 在Pitch坐标系(P)下计算Pitch轴的扰动力矩 (手动叉乘 n = r x F)
-    LibXR::Position<float> torque_vector_pitch(
-        radius_pitch_to_center_of_mass_.y() * force_in_pitch.z() -
-            radius_pitch_to_center_of_mass_.z() * force_in_pitch.y(),
-        radius_pitch_to_center_of_mass_.z() * force_in_pitch.x() -
-            radius_pitch_to_center_of_mass_.x() * force_in_pitch.z(),
-        radius_pitch_to_center_of_mass_.x() * force_in_pitch.y() -
-            radius_pitch_to_center_of_mass_.y() * force_in_pitch.x());
+    Eigen::Matrix<float, 3, 1> r_yaw_to_pitch;
+    r_yaw_to_pitch << radius_yaw_to_pitch_.x(), radius_yaw_to_pitch_.y(),
+        radius_yaw_to_pitch_.z();
+    Eigen::Matrix<float, 3, 1> r_yaw_to_center =
+        r_yaw_to_pitch + R_yaw_from_pitch * r_pitch;
+    float tau_g_yaw =
+        (r_yaw_to_center.cross(-gimbal_pitch_mass_ * accel_in_yaw))(2);
 
-    // 在Yaw坐标系(Y)下计算Yaw轴的扰动力矩
-    // 计算力臂 r: 从Yaw轴心到负载重心的向量
-    LibXR::Position<float> radius_pitch_to_center_of_mass_in_yaw(
-        rotation_yaw_from_pitch(0, 0) * radius_pitch_to_center_of_mass_.x(),
-        rotation_yaw_from_pitch(1, 0) * radius_pitch_to_center_of_mass_.x(),
-        rotation_yaw_from_pitch(2, 0) * radius_pitch_to_center_of_mass_.x());
-    LibXR::Position<float> radius_yaw_to_center_of_mass(
-        radius_yaw_to_pitch_.x() + radius_pitch_to_center_of_mass_in_yaw.x(),
-        radius_yaw_to_pitch_.y() + radius_pitch_to_center_of_mass_in_yaw.y(),
-        radius_yaw_to_pitch_.z() + radius_pitch_to_center_of_mass_in_yaw.z());
+    // 惯性项：I·α + ω × (I·ω)
+    float dt_seconds = static_cast<float>(dt_ * 1e-6f);
+    float alpha_pitch =
+        (dt_seconds > 0.0f)
+            ? (now_omega_pitch_ - prev_omega_pitch_) / dt_seconds
+            : 0.0f;
+    float alpha_yaw = (dt_seconds > 0.0f)
+                          ? (now_omega_yaw_ - prev_omega_yaw_) / dt_seconds
+                          : 0.0f;
 
-    // 手动叉乘 n = r x F
-    LibXR::Position<float> torque_vector_yaw(
-        radius_yaw_to_center_of_mass.y() * force_in_yaw.z() -
-            radius_yaw_to_center_of_mass.z() * force_in_yaw.y(),
-        radius_yaw_to_center_of_mass.z() * force_in_yaw.x() -
-            radius_yaw_to_center_of_mass.x() * force_in_yaw.z(),
-        radius_yaw_to_center_of_mass.x() * force_in_yaw.y() -
-            radius_yaw_to_center_of_mass.y() * force_in_yaw.x());
+    // Pitch 惯性项
+    auto i_pitch_about_ = inertia_pitch_.Translate(r_pitch);
+    Eigen::Matrix<float, 3, 3> i_pitch_mat_ =
+        static_cast<Eigen::Matrix<float, 3, 3>>(i_pitch_about_);
+    Eigen::Matrix<float, 3, 1> omega_pitch_vec(0.0f, now_omega_pitch_, 0.0f);
+    float tau_i_pitch =
+        (i_pitch_mat_ * Eigen::Matrix<float, 3, 1>(0.0f, alpha_pitch, 0.0f) +
+         omega_pitch_vec.cross(i_pitch_mat_ * omega_pitch_vec))(1);
 
-    // Pitch电机绕其自身的Y轴旋转, 取y分量
-    pitch_torque_ = torque_vector_pitch.y();
-    // Yaw电机绕其自身的Z轴旋转, 取z分量
-    yaw_torque_ = torque_vector_yaw.z();
+    // Yaw 惯性项
+    auto i_yaw_about_ =
+        inertia_pitch_.Rotate(R_yaw_from_pitch).Translate(r_yaw_to_center);
+    Eigen::Matrix<float, 3, 3> i_yaw_mat_ =
+        static_cast<Eigen::Matrix<float, 3, 3>>(i_yaw_about_);
+    Eigen::Matrix<float, 3, 1> omega_yaw_vec(0.0f, 0.0f, now_omega_yaw_);
+    float tau_i_yaw =
+        (i_yaw_mat_ * Eigen::Matrix<float, 3, 1>(0.0f, 0.0f, alpha_yaw) +
+         omega_yaw_vec.cross(i_yaw_mat_ * omega_yaw_vec))(2);
+
+    // 合成输出
+    pitch_torque_ = tau_g_pitch + tau_i_pitch;
+    yaw_torque_ = tau_g_yaw + tau_i_yaw;
   }
+
   /**
    * @brief 将一个值限制在给定的最大值和最小值之间
    *
@@ -396,21 +392,43 @@ class Gimbal : public LibXR::Application {
   void OutputToDynamics() {
     MotorNearestTransposition();
 
-    float target_omega_yaw =
-        pid_angle_yaw_.Calculate(target_angle_yaw_, euler_.Pitch(), dt_);
-    float target_omega_pitch =
-        pid_angle_pitch_.Calculate(target_angle_pitch_, euler_.Yaw(), dt_);
+    // 欧拉角 -> Pitch系下的姿态角
+    const auto [cy, sy] =
+        std::make_pair(std::cos(euler_.Yaw()), std::sin(euler_.Yaw()));
+    const auto [cp, sp] =
+        std::make_pair(std::cos(euler_.Pitch()), std::sin(euler_.Pitch()));
+    const auto [cr, sr] =
+        std::make_pair(std::cos(euler_.Roll()), std::sin(euler_.Roll()));
 
-    float feedback_yaw =
-        pid_omega_yaw_.Calculate(target_omega_yaw, gyro_data_.z(), dt_);
-    float feedback_pitch =
-        pid_omega_pitch_.Calculate(target_omega_pitch, gyro_data_.x(), dt_);
+    const Eigen::Matrix3f R_current =
+        rotation_pitch_from_imu_.transpose() *
+        (Eigen::Matrix3f() << cy * cp, cy * sp * sr - sy * cr,
+         cy * sp * cr + sy * sr, sy * cp, sy * sp * sr + cy * cr,
+         sy * sp * cr - cy * sr, -sp, cp * sr, cp * cr)
+            .finished();
 
-    float output_yaw = feedback_yaw + yaw_torque_;
-    float output_pitch = feedback_pitch + pitch_torque_;
+    const float current_pitch = std::asin(-R_current(2, 0));
+    const float current_yaw = std::atan2(R_current(1, 0), R_current(0, 0));
 
-    output_yaw = std::clamp(output_yaw, -max_current_, max_current_);
-    output_pitch = std::clamp(output_pitch, -max_current_, max_current_);
+    LibXR::STDIO::Printf("原始欧拉角(deg) - Yaw:%.2f Pitch:%.2f Roll:%.2f\n",
+                         euler_.Yaw(), euler_.Pitch(), euler_.Roll());
+    LibXR::STDIO::Printf("Pitch系欧拉角(deg) - Yaw:%.2f Pitch:%.2f\n",
+                         current_yaw, current_pitch);
+
+    // PID + 输出
+    const float output_yaw = std::clamp(
+        pid_omega_yaw_.Calculate(
+            pid_angle_yaw_.Calculate(target_angle_yaw_, current_yaw, dt_),
+            gyro_data_.z(), dt_) +
+            yaw_torque_,
+        -max_current_, max_current_);
+
+    const float output_pitch = std::clamp(
+        pid_omega_pitch_.Calculate(
+            pid_angle_pitch_.Calculate(target_angle_pitch_, current_pitch, dt_),
+            gyro_data_.x(), dt_) +
+            pitch_torque_,
+        -max_current_, max_current_);
 
     motor_can1_.SetCurrent(6, output_yaw);
     motor_can2_.SetCurrent(5, output_pitch);
@@ -456,6 +474,10 @@ class Gimbal : public LibXR::Application {
   float gimbal_max_ = 0.0f;
   //! Pitch轴最小角度(行程下限)
   float gimbal_min_ = 0.0f;
+  //! 上次Pitch轴角速度
+  float prev_omega_pitch_ = 0.0f;
+  //! 上次Yaw轴角速度
+  float prev_omega_yaw_ = 0.0f;
 
   //! Pitch轴固连负载的质量 (kg)
   const float gimbal_pitch_mass_ = 0.0f;
@@ -465,10 +487,12 @@ class Gimbal : public LibXR::Application {
   //! Y系下, Yaw轴心->Pitch轴心 的向量 (m)
   const LibXR::Position<float> radius_yaw_to_pitch_{0.0f, 0.0f, 0.0f};
   //! IMU坐标系到Pitch坐标系的旋转矩阵
-  const LibXR::RotationMatrix<float> rotation_pitch_from_imu_{
+  const Eigen::Matrix<float, 3, 3> rotation_pitch_from_imu_{
       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   //! IMU加速度数据
   const LibXR::Position<float> imu_acceleration_{0.0f, 0.0f, 0.0f};
+  //! 质心处惯性对象（Pitch系）
+  LibXR::Inertia<float> inertia_pitch_;
 
   //! 电机最大输出电流
   const float max_current_ = 1.0f;
