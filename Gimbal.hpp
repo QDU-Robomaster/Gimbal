@@ -69,14 +69,10 @@ required_hardware:
   - motor_can2
   - bmi088
 depends:
-  - cmd
-  - motor_can1
-  - motor_can2
-  - pid
-  - gimbal_cmd_topic_name: 'gimbal_cmd'
-  - accl_topic_name: 'bmi088_accl'
-  - euler_topic_name: 'ahrs_euler'
-  - gyro_topic_name: 'bmi088_gyro'
+  - qdu-future/CMD
+  - qdu-future/BMI088
+  - qdu-future/Motor
+  - xrobot-org/MadgwickAHRS
 === END MANIFEST === */
 // clang-format on
 
@@ -90,6 +86,7 @@ depends:
 #include "Motor.hpp"
 #include "app_framework.hpp"
 #include "inertia.hpp"
+#include "logger.hpp"
 #include "pid.hpp"
 #include "semaphore.hpp"
 #include "thread.hpp"
@@ -414,7 +411,7 @@ class Gimbal : public LibXR::Application {
                          euler_.Yaw(), euler_.Pitch(), euler_.Roll());
     LibXR::STDIO::Printf("Pitch系欧拉角(deg) - Yaw:%.2f Pitch:%.2f\n",
                          current_yaw, current_pitch);
-
+                         
     // PID + 输出
     const float output_yaw = std::clamp(
         pid_omega_yaw_.Calculate(
