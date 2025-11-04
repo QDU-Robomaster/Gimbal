@@ -84,6 +84,7 @@ depends:
 #include "MadgwickAHRS.hpp"
 #include "Motor.hpp"
 #include "app_framework.hpp"
+#include "libxr_def.hpp"
 #include "libxr_time.hpp"
 #include "mutex.hpp"
 
@@ -156,6 +157,10 @@ class Gimbal : public LibXR::Application {
         motor_can1_(motor_can1),
         motor_can2_(motor_can2),
         cmd_(cmd) {
+    UNUSED(hw);
+    UNUSED(app);
+
+    
     thread_.Create(this, ThreadFunction, "GimbalThread", task_stack_depth,
                    LibXR::Thread::Priority::MEDIUM);
 
@@ -163,13 +168,13 @@ class Gimbal : public LibXR::Application {
     r_pitch << radius_pitch_to_center_of_mass_.x(),
         radius_pitch_to_center_of_mass_.y(),
         radius_pitch_to_center_of_mass_.z();
-    const float m = gimbal_pitch_mass_;
-    const float r2 = r_pitch.squaredNorm();
-    Eigen::Matrix<float, 3, 3> i_com_pitch_ =
-        m * (r2 * Eigen::Matrix<float, 3, 3>::Identity() -
+    const float M = gimbal_pitch_mass_;
+    const float R2 = r_pitch.squaredNorm();
+    Eigen::Matrix<float, 3, 3> i_com_pitch =
+        M * (R2 * Eigen::Matrix<float, 3, 3>::Identity() -
              r_pitch * r_pitch.transpose());
 
-    inertia_pitch_ = LibXR::Inertia<float>(m, i_com_pitch_);
+    inertia_pitch_ = LibXR::Inertia<float>(M, i_com_pitch);
   }
 
   /**
@@ -230,11 +235,11 @@ class Gimbal : public LibXR::Application {
     float gimbal_yaw_cmd = cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED;
     float gimbal_pitch_cmd = cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED;
 
-    const float pitch_err_ = target_angle_pitch_ - euler_.Pitch();
+    const float PITCH_ERR = target_angle_pitch_ - euler_.Pitch();
     const float ENCODER_DELTA_MAX_PIT = gimbal_max_ - motor_can2_.GetAngle(5);
     const float ENCODER_DELTA_MIN_PIT = gimbal_min_ - motor_can2_.GetAngle(5);
-    const float DELTA_MAX_PIT = ENCODER_DELTA_MAX_PIT - pitch_err_;
-    const float DELTA_MIN_PIT = ENCODER_DELTA_MIN_PIT - pitch_err_;
+    const float DELTA_MAX_PIT = ENCODER_DELTA_MAX_PIT - PITCH_ERR;
+    const float DELTA_MIN_PIT = ENCODER_DELTA_MIN_PIT - PITCH_ERR;
     gimbal_yaw_cmd = std::clamp(gimbal_yaw_cmd, DELTA_MIN_PIT, DELTA_MAX_PIT);
 
     target_angle_yaw_ += gimbal_yaw_cmd;
@@ -283,16 +288,16 @@ class Gimbal : public LibXR::Application {
    */
   void GravityCompensation(Eigen::Matrix<float, 3, 1> &accl_data_) {
     // 构造 Pitch->Yaw 旋转矩阵
-    const float cos_p = std::cos(now_angle_pitch_);
-    const float sin_p = std::sin(now_angle_pitch_);
-    Eigen::Matrix<float, 3, 3> R_yaw_from_pitch;
-    R_yaw_from_pitch << cos_p, 0.0f, sin_p, 0.0f, 1.0f, 0.0f, -sin_p, 0.0f,
-        cos_p;
+    const float COS_P = std::cos(now_angle_pitch_);
+    const float SIN_P = std::sin(now_angle_pitch_);
+    Eigen::Matrix<float, 3, 3> r_yaw_from_pitch;
+    r_yaw_from_pitch << COS_P, 0.0f, SIN_P, 0.0f, 1.0f, 0.0f, -SIN_P, 0.0f,
+        COS_P;
 
     // 坐标变换：IMU -> Pitch -> Yaw
     Eigen::Matrix<float, 3, 1> accel_in_pitch =
         rotation_pitch_from_imu_ * accl_data_;
-    Eigen::Matrix<float, 3, 1> accel_in_yaw = R_yaw_from_pitch * accel_in_pitch;
+    Eigen::Matrix<float, 3, 1> accel_in_yaw = r_yaw_from_pitch * accel_in_pitch;
 
     // 质心向量
     Eigen::Matrix<float, 3, 1> r_pitch;
@@ -308,7 +313,7 @@ class Gimbal : public LibXR::Application {
     r_yaw_to_pitch << radius_yaw_to_pitch_.x(), radius_yaw_to_pitch_.y(),
         radius_yaw_to_pitch_.z();
     Eigen::Matrix<float, 3, 1> r_yaw_to_center =
-        r_yaw_to_pitch + R_yaw_from_pitch * r_pitch;
+        r_yaw_to_pitch + r_yaw_from_pitch * r_pitch;
     float tau_g_yaw =
         (r_yaw_to_center.cross(-gimbal_pitch_mass_ * accel_in_yaw))(2);
 
@@ -323,23 +328,23 @@ class Gimbal : public LibXR::Application {
                           : 0.0f;
 
     // Pitch 惯性项
-    auto i_pitch_about_ = inertia_pitch_.Translate(r_pitch);
-    Eigen::Matrix<float, 3, 3> i_pitch_mat_ =
-        static_cast<Eigen::Matrix<float, 3, 3>>(i_pitch_about_);
+    auto i_pitch_about = inertia_pitch_.Translate(r_pitch);
+    Eigen::Matrix<float, 3, 3> i_pitch_mat =
+        static_cast<Eigen::Matrix<float, 3, 3>>(i_pitch_about);
     Eigen::Matrix<float, 3, 1> omega_pitch_vec(0.0f, now_omega_pitch_, 0.0f);
     float tau_i_pitch =
-        (i_pitch_mat_ * Eigen::Matrix<float, 3, 1>(0.0f, alpha_pitch, 0.0f) +
-         omega_pitch_vec.cross(i_pitch_mat_ * omega_pitch_vec))(1);
+        (i_pitch_mat * Eigen::Matrix<float, 3, 1>(0.0f, alpha_pitch, 0.0f) +
+         omega_pitch_vec.cross(i_pitch_mat * omega_pitch_vec))(1);
 
     // Yaw 惯性项
-    auto i_yaw_about_ =
-        inertia_pitch_.Rotate(R_yaw_from_pitch).Translate(r_yaw_to_center);
-    Eigen::Matrix<float, 3, 3> i_yaw_mat_ =
-        static_cast<Eigen::Matrix<float, 3, 3>>(i_yaw_about_);
+    auto i_yaw_about =
+        inertia_pitch_.Rotate(r_yaw_from_pitch).Translate(r_yaw_to_center);
+    Eigen::Matrix<float, 3, 3> i_yaw_mat =
+        static_cast<Eigen::Matrix<float, 3, 3>>(i_yaw_about);
     Eigen::Matrix<float, 3, 1> omega_yaw_vec(0.0f, 0.0f, now_omega_yaw_);
     float tau_i_yaw =
-        (i_yaw_mat_ * Eigen::Matrix<float, 3, 1>(0.0f, 0.0f, alpha_yaw) +
-         omega_yaw_vec.cross(i_yaw_mat_ * omega_yaw_vec))(2);
+        (i_yaw_mat * Eigen::Matrix<float, 3, 1>(0.0f, 0.0f, alpha_yaw) +
+         omega_yaw_vec.cross(i_yaw_mat * omega_yaw_vec))(2);
 
     // 合成输出
     pitch_torque_ = tau_g_pitch + tau_i_pitch;
@@ -368,18 +373,18 @@ class Gimbal : public LibXR::Application {
    *
    */
   void MotorNearestTransposition() {
-    float tmp_delta_angle_ = 0.0f;
-    tmp_delta_angle_ = fmod(target_angle_yaw_ - now_angle_yaw_, 2.0f * M_PI);
-    if (tmp_delta_angle_ > M_PI) {
-      tmp_delta_angle_ -= 2.0f * M_PI;
-    } else if (tmp_delta_angle_ < -M_PI) {
-      tmp_delta_angle_ += 2.0f * M_PI;
+    float tmp_delta_angle = 0.0f;
+    tmp_delta_angle = fmod(target_angle_yaw_ - now_angle_yaw_, 2.0f * M_PI);
+    if (tmp_delta_angle > M_PI) {
+      tmp_delta_angle -= 2.0f * M_PI;
+    } else if (tmp_delta_angle < -M_PI) {
+      tmp_delta_angle += 2.0f * M_PI;
     }
-    target_angle_yaw_ = motor_can1_.GetAngle(6) + tmp_delta_angle_;
+    target_angle_yaw_ = motor_can1_.GetAngle(6) + tmp_delta_angle;
 
     Constrain(&target_angle_pitch_, gimbal_min_, gimbal_max_);
-    tmp_delta_angle_ = target_angle_pitch_ - now_angle_pitch_;
-    target_angle_pitch_ = -motor_can2_.GetAngle(5) + tmp_delta_angle_;
+    tmp_delta_angle = target_angle_pitch_ - now_angle_pitch_;
+    target_angle_pitch_ = -motor_can2_.GetAngle(5) + tmp_delta_angle;
   }
 
   /**
@@ -397,38 +402,38 @@ class Gimbal : public LibXR::Application {
     const auto [cr, sr] =
         std::make_pair(std::cos(euler_.Roll()), std::sin(euler_.Roll()));
 
-    const Eigen::Matrix3f R_current =
+    const Eigen::Matrix3f R_CURRENT =
         rotation_pitch_from_imu_.transpose() *
         (Eigen::Matrix3f() << cy * cp, cy * sp * sr - sy * cr,
          cy * sp * cr + sy * sr, sy * cp, sy * sp * sr + cy * cr,
          sy * sp * cr - cy * sr, -sp, cp * sr, cp * cr)
             .finished();
 
-    const float current_pitch = std::asin(-R_current(2, 0));
-    const float current_yaw = std::atan2(R_current(1, 0), R_current(0, 0));
+    const float CURRENT_PITCH = std::asin(-R_CURRENT(2, 0));
+    const float CURRENT_YAW = std::atan2(R_CURRENT(1, 0), R_CURRENT(0, 0));
 
     LibXR::STDIO::Printf("原始欧拉角(deg) - Yaw:%.2f Pitch:%.2f Roll:%.2f\n",
                          euler_.Yaw(), euler_.Pitch(), euler_.Roll());
     LibXR::STDIO::Printf("Pitch系欧拉角(deg) - Yaw:%.2f Pitch:%.2f\n",
-                         current_yaw, current_pitch);
+                         CURRENT_YAW, CURRENT_PITCH);
 
     // PID + 输出
-    const float output_yaw = std::clamp(
+    const float OUTPUT_YAW = std::clamp(
         pid_omega_yaw_.Calculate(
-            pid_angle_yaw_.Calculate(target_angle_yaw_, current_yaw, dt_),
+            pid_angle_yaw_.Calculate(target_angle_yaw_, CURRENT_YAW, dt_),
             gyro_data_.z(), dt_) +
             yaw_torque_,
         -max_current_, max_current_);
 
-    const float output_pitch = std::clamp(
+    const float OUTPUT_PITCH = std::clamp(
         pid_omega_pitch_.Calculate(
-            pid_angle_pitch_.Calculate(target_angle_pitch_, current_pitch, dt_),
+            pid_angle_pitch_.Calculate(target_angle_pitch_, CURRENT_PITCH, dt_),
             gyro_data_.x(), dt_) +
             pitch_torque_,
         -max_current_, max_current_);
 
-    motor_can1_.SetCurrent(6, output_yaw);
-    motor_can2_.SetCurrent(5, output_pitch);
+    motor_can1_.SetCurrent(6, OUTPUT_YAW);
+    motor_can2_.SetCurrent(5, OUTPUT_PITCH);
   }
 
   /**
@@ -477,22 +482,21 @@ class Gimbal : public LibXR::Application {
   float prev_omega_yaw_ = 0.0f;
 
   //! Pitch轴固连负载的质量 (kg)
-  const float gimbal_pitch_mass_ = 0.0f;
+  float gimbal_pitch_mass_ = 0.0f;
   //! P系下, Pitch轴心->负载重心 的向量 (m)
-  const LibXR::Position<float> radius_pitch_to_center_of_mass_{0.0f, 0.0f,
-                                                               0.0f};
+  LibXR::Position<float> radius_pitch_to_center_of_mass_{0.0f, 0.0f, 0.0f};
   //! Y系下, Yaw轴心->Pitch轴心 的向量 (m)
-  const LibXR::Position<float> radius_yaw_to_pitch_{0.0f, 0.0f, 0.0f};
+  LibXR::Position<float> radius_yaw_to_pitch_{0.0f, 0.0f, 0.0f};
   //! IMU坐标系到Pitch坐标系的旋转矩阵
-  const Eigen::Matrix<float, 3, 3> rotation_pitch_from_imu_{
+  Eigen::Matrix<float, 3, 3> rotation_pitch_from_imu_{
       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   //! IMU加速度数据
-  const LibXR::Position<float> imu_acceleration_{0.0f, 0.0f, 0.0f};
+  LibXR::Position<float> imu_acceleration_{0.0f, 0.0f, 0.0f};
   //! 质心处惯性对象（Pitch系）
   LibXR::Inertia<float> inertia_pitch_;
 
   //! 电机最大输出电流
-  const float max_current_ = 1.0f;
+  float max_current_ = 1.0f;
 
   //! Yaw轴角度环PID控制器
   LibXR::PID<float> pid_angle_yaw_;
