@@ -222,6 +222,7 @@ class Gimbal : public LibXR::Application {
       gimbal->GravityCompensation(gimbal->accl_data_);
       gimbal->mutex_.Unlock();
       gimbal->OutputToDynamics();
+      
       auto last_time = LibXR::Timebase::GetMilliseconds();
       gimbal->thread_.SleepUntil(last_time, 2.0f);
     }
