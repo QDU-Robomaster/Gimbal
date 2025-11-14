@@ -36,8 +36,6 @@
     *   `I_yaw`: Yaw轴转动惯量
     *   `M_pitch`: Pitch轴质心质量
     *   `G_pitch`: Pitch轴质心位置
-    *   `pitch_min`: Pitch电机实际下限（弧度）
-    *   `pitch_max`: Pitch电机实际上限（弧度）
     *   `imu_pitch_min`: IMU视角下Pitch轴下限（弧度）
     *   `imu_pitch_max`: IMU视角下Pitch轴上限（弧度）
 *   `gimbal_cmd_name_`: `const char*`，云台控制命令主题名称。
