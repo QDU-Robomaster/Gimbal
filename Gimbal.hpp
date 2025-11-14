@@ -2,11 +2,10 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: No description provided
+module_description: gimbal_test
 constructor_args:
-  - cmd: '@cmd'
-  - task_stack_depth: 2048
-  - pid_angle_param_yaw:
+    task_stack_depth: 4096
+    param_pid_yaw_speed:
       k: 1.0
       p: 0.0
       i: 0.0
@@ -14,7 +13,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - pid_angle_param_pitch:
+    param_pid_yaw_angle:
       k: 1.0
       p: 0.0
       i: 0.0
@@ -22,7 +21,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - pid_omega_param_yaw:
+    param_pid_pitch_speed:
       k: 1.0
       p: 0.0
       i: 0.0
@@ -30,7 +29,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - pid_omega_param_pitch:
+    param_pid_pitch_angle:
       k: 1.0
       p: 0.0
       i: 0.0
@@ -38,29 +37,19 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_can1: '@motor_can1'
-  - motor_can2: '@motor_can2'
-  - gimbal_pitch_center: 0.0
-  - gimbal_yaw_center: 0.0
-  - gimbal_max: 0.0
-  - gimbal_min: 0.0
-  - gimbal_pitch_mass: 0.0
-  - radius_pitch_to_center_of_mass:
-      x: 0.0
-      y: 0.0
-      z: 0.0
-  - radius_yaw_to_pitch:
-      x: 0.0
-      y: 0.0
-      z: 0.0
-  - rotation_pitch_from_imu:
-      m: [[1.0, 0.0, 0.0],
-          [0.0, 1.0, 0.0],
-          [0.0, 0.0, 1.0]]
-  - gimbal_cmd_topic_name: 'gimbal_cmd'
-  - accl_topic_name: 'bmi088_accl'
-  - euler_topic_name: 'ahrs_euler'
-  - gyro_topic_name: 'bmi088_gyro'
+    motor_yaw: '@motor_can2.GetMotor(8)'
+    motor_pitch: '@motor_can2.GetMotor(10)'
+    gimbal_param:
+      I_pitch: 0.0
+      I_yaw: 0.0
+      M_pitch: 0.0
+      G_pitch: 0.0
+      pitch_min: 0.0
+      pitch_max: 0.0
+    gimbal_cmd_name_: gimbal_cmd
+    accl_name_: bmi088_accl
+    euler_name_: ahrs_euler
+    gyro_name_: bmi088_gyro
 template_args:
   - MotorType: RMMotorContainer
 required_hardware:
@@ -76,457 +65,315 @@ depends:
 === END MANIFEST === */
 // clang-format on
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 
 #include "BMI088.hpp"
 #include "CMD.hpp"
-#include "MadgwickAHRS.hpp"
+#include "Eigen/Core"
 #include "Motor.hpp"
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
-#include "libxr_time.hpp"
+#include "message.hpp"
 #include "mutex.hpp"
+#include "pid.hpp"
+#include "semaphore.hpp"
+#include "thread.hpp"
+#include "timebase.hpp"
+#include "timer.hpp"
+#include "transform.hpp"
 
-#define GIMBAL_MAX_SPEED (M_2PI * 1.5f)
-
-/**
- * @brief 云台控制应用类
- *
- * @tparam MotorType 电机驱动类型
- */
 template <typename MotorType>
 class Gimbal : public LibXR::Application {
  public:
   /**
-   * @brief Gimbal 构造函数
+   * @brief 用于定义云台物理参数的结构体
    *
-   * @param hw 硬件容器
-   * @param app 应用管理器
-   * @param cmd 命令模块实例
-   * @param task_stack_depth 任务堆栈深度
-   * @param pid_angle_param_yaw Yaw轴角度环PID参数
-   * @param pid_angle_param_pitch Pitch轴角度环PID参数
-   * @param pid_omega_param_yaw Yaw轴角速度环PID参数
-   * @param pid_omega_param_pitch Pitch轴角速度环PID参数
-   * @param motor_can1 CAN1上的电机实例 (Yaw)
-   * @param motor_can2 CAN2上的电机实例 (Pitch)
-   * @param gimbal_pitch_center_ Pitch轴电机中心(零点)位置
-   * @param gimbal_yaw_center_ Yaw轴电机中心(零点)位置
-   * @param gimbal_max_ Pitch轴最大角度(行程上限)
-   * @param gimbal_min_ Pitch轴最小角度(行程下限)
-   * @param gimbal_pitch_mass_ Pitch轴固连负载的质量 (kg)
-   * @param radius_pitch_to_center_of_mass Pitch轴心到负载重心的向量 (m)
-   * @param radius_yaw_to_pitch Yaw轴心到Pitch轴心的向量 (m)
-   * @param rotation_pitch_from_imu IMU坐标系到Pitch坐标系的旋转矩阵
-   * @param gimbal_cmd_topic_name 云台命令Topic名称
-   * @param accl_topic_name 加速度计数据Topic名称
-   * @param euler_topic_name 欧拉角数据Topic名称
-   * @param gyro_topic_name 陀螺仪数据Topic名称
    */
-  Gimbal(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app, CMD &cmd,
-         uint32_t task_stack_depth,
-         LibXR::PID<float>::Param pid_angle_param_yaw,
-         LibXR::PID<float>::Param pid_angle_param_pitch,
-         LibXR::PID<float>::Param pid_omega_param_yaw,
-         LibXR::PID<float>::Param pid_omega_param_pitch,
-         Motor<MotorType> &motor_can1, Motor<MotorType> &motor_can2,
-         float gimbal_pitch_center_, float gimbal_yaw_center_,
-         float gimbal_max_, float gimbal_min_, float gimbal_pitch_mass_,
-         const LibXR::Position<float> &radius_pitch_to_center_of_mass,
-         const LibXR::Position<float> &radius_yaw_to_pitch,
-         const LibXR::RotationMatrix<float> &rotation_pitch_from_imu,
-         const char *gimbal_cmd_topic_name, const char *accl_topic_name,
-         const char *euler_topic_name, const char *gyro_topic_name)
-      : gimbal_cmd_name_(gimbal_cmd_topic_name),
-        accl_name_(accl_topic_name),
-        euler_name_(euler_topic_name),
-        gyro_name_(gyro_topic_name),
-        gimbal_pitch_center_(gimbal_pitch_center_),
-        gimbal_yaw_center_(gimbal_yaw_center_),
-        gimbal_max_(gimbal_max_),
-        gimbal_min_(gimbal_min_),
-        gimbal_pitch_mass_(gimbal_pitch_mass_),
-        radius_pitch_to_center_of_mass_(radius_pitch_to_center_of_mass),
-        radius_yaw_to_pitch_(radius_yaw_to_pitch),
-        rotation_pitch_from_imu_(rotation_pitch_from_imu),
-        pid_angle_yaw_(pid_angle_param_yaw),
-        pid_angle_pitch_(pid_angle_param_pitch),
-        pid_omega_yaw_(pid_omega_param_yaw),
-        pid_omega_pitch_(pid_omega_param_pitch),
-        motor_can1_(motor_can1),
-        motor_can2_(motor_can2),
-        cmd_(cmd) {
+  struct GimbalParam {
+    /* pitch和yaw的转动惯量 */
+    float I_pitch;
+    float I_yaw;
+    float M_pitch; /* pitch的质心质量 */
+    float
+        G_pitch; /* pitch的质心位置，从pitch电机开始计算，模型是简化过的，用线密度估算*/
+
+    /* pitch电机的实际上下限，单位和GetAngle()一样，弧度 */
+    float pitch_min;
+    float pitch_max;
+
+    /* imu视角里pitch的上下限，单位和GetAngle()一样，弧度 */
+    float imu_pitch_min;
+    float imu_pitch_max;
+  };
+
+  /**
+   * @brief 电机动力学反馈参数
+   *
+   */
+  struct Feedback {
+    float angle = 0.f;
+    float speed = 0.f;
+    float torque = 0.f;
+  };
+
+  /**
+   * @brief 储存扭矩的结构体
+   *
+   */
+  struct TorqueFeedForward {
+    float yaw = 0.f;
+    float pitch = 0.f;
+  };
+
+  /**
+   * @brief 用于描述云台状态的结构体
+   *
+   */
+  struct State {
+    Eigen::Matrix<float, 3, 1> accl = {0, 0, 0};
+    LibXR::EulerAngle<float> euler = {0, 0, 0};
+    Eigen::Matrix<float, 3, 1> gyro = {0, 0, 0};
+
+    Feedback yaw_feedback_;
+    Feedback pitch_feedback_;
+  };
+
+  /**
+   * @brief gimbal 类的构造函数
+   *
+   * @param hw LibXR::HardwareContainer 的引用，用于查找硬件资源
+   * @param app LibXR::ApplicationManager 的引用
+   * @param task_stack_depth 任务堆栈深度
+   * @param param_pid_yaw_speed 云台yaw轴速度环PID参数
+   * @param param_pid_yaw_angle 云台yaw轴位置环PID参数
+   * @param param_pid_pitch_speed 云台pitch轴速度环PID参数
+   * @param param_pid_pitch_angle 云台pitch轴位置环PID参数
+   * @param motor_yaw 指向yaw电机实例的指针
+   * @param motor_pitch 指向pitch电机实例的指针
+   * @param gimbal_param 云台物理参数
+   * @param gimbal_cmd_name 云台控制命令主题名称
+   * @param accl_name 加速度计数据主题名称
+   * @param euler_name 欧拉角数据主题名称
+   * @param gyro_name 陀螺仪数据主题名称
+   */
+  Gimbal(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app,
+              uint32_t task_stack_depth,
+              LibXR::PID<float>::Param param_pid_yaw_speed,
+              LibXR::PID<float>::Param param_pid_yaw_angle,
+              LibXR::PID<float>::Param param_pid_pitch_speed,
+              LibXR::PID<float>::Param param_pid_pitch_angle,
+              typename MotorType::RMMotor *motor_yaw,
+              typename MotorType::RMMotor *motor_pitch,
+              GimbalParam gimbal_param, const char *gimbal_cmd_name,
+              const char *accl_name, const char *euler_name,
+              const char *gyro_name)
+      : pid_yaw_speed_(param_pid_yaw_speed),
+        pid_yaw_angle_(param_pid_yaw_angle),
+        pid_pitch_speed_(param_pid_pitch_speed),
+        pid_pitch_angle_(param_pid_pitch_angle),
+        motor_yaw_(motor_yaw),
+        motor_pitch_(motor_pitch),
+        GIMBALPARAM(gimbal_param),
+        gimbal_cmd_name_(gimbal_cmd_name),
+        accl_name_(accl_name),
+        euler_name_(euler_name),
+        gyro_name_(gyro_name) {
     UNUSED(hw);
     UNUSED(app);
-
-
-    thread_.Create(this, ThreadFunction, "GimbalThread", task_stack_depth,
-                   LibXR::Thread::Priority::MEDIUM);
-
-    Eigen::Matrix<float, 3, 1> r_pitch;
-    r_pitch << radius_pitch_to_center_of_mass_.x(),
-        radius_pitch_to_center_of_mass_.y(),
-        radius_pitch_to_center_of_mass_.z();
-    const float M = gimbal_pitch_mass_;
-    const float R2 = r_pitch.squaredNorm();
-    Eigen::Matrix<float, 3, 3> i_com_pitch =
-        M * (R2 * Eigen::Matrix<float, 3, 3>::Identity() -
-             r_pitch * r_pitch.transpose());
-
-    inertia_pitch_ = LibXR::Inertia<float>(M, i_com_pitch);
+    this->thread_.Create(this, ThreadFunc, "TestGimbalThread", task_stack_depth,
+                         LibXR::Thread::Priority::MEDIUM);
   }
 
   /**
-   * @brief 云台控制线程函数，为静态成员函数
+   * @brief 线程函数
    *
-   * @param gimbal 指向Gimbal实例的指针
+   * @param gimbal
    */
-  static void ThreadFunction(Gimbal *gimbal) {
-    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber(
-        gimbal->gimbal_cmd_name_);
-    LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> accl_suber(
-        gimbal->accl_name_);
-    LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
-        gimbal->euler_name_);
-    LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
-        gimbal->gyro_name_);
-
-    cmd_suber.StartWaiting();
-    accl_suber.StartWaiting();
-    euler_suber.StartWaiting();
-    gyro_suber.StartWaiting();
-
+  static void ThreadFunc(Gimbal *gimbal) {
+    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> gimbal_cmd_subs("gimbal_cmd");
+    LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gimbal_accl_subs(
+        "bmi088_accl");
+    LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> gimbal_euler_subs(
+        "ahrs_euler");
+    LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gimbal_gyro_subs(
+        "bmi088_gyro");
+    gimbal_cmd_subs.StartWaiting();
+    gimbal_accl_subs.StartWaiting();
+    gimbal_euler_subs.StartWaiting();
+    gimbal_gyro_subs.StartWaiting();
     while (true) {
-      if (cmd_suber.Available()) {
-        gimbal->cmd_data_ = cmd_suber.GetData();
-        cmd_suber.StartWaiting();
+      if (gimbal_cmd_subs.Available()) {
+        gimbal->gimbal_cmd_ = gimbal_cmd_subs.GetData();
+        gimbal_cmd_subs.StartWaiting();
       }
-      if (accl_suber.Available()) {
-        gimbal->accl_data_ = accl_suber.GetData();
-        accl_suber.StartWaiting();
+      if (gimbal_accl_subs.Available()) {
+        gimbal->current_state_.accl = gimbal_accl_subs.GetData();
+        gimbal_accl_subs.StartWaiting();
       }
+      if (gimbal_euler_subs.Available()) {
+        /* 陀螺仪是坐标定义，电机上下限定义跟陀螺仪 */
+        // gimbal->current_state_.euler.Yaw() =
+        // gimbal_euler_subs.GetData().Yaw();
+        // gimbal->current_state_.euler.Pitch() =
+        //     gimbal->LinearMap(gimbal_euler_subs.GetData().Pitch(),
+        //               gimbal->GIMBALPARAM.imu_pitch_min,
+        //               gimbal->GIMBALPARAM.imu_pitch_max,
+        //               gimbal->GIMBALPARAM.pitch_min,
+        //               gimbal->GIMBALPARAM.pitch_max);
+        gimbal->current_state_.euler = gimbal_euler_subs.GetData();
+        gimbal_euler_subs.StartWaiting();
+      }
+      if (gimbal_gyro_subs.Available()) {
+        gimbal->current_state_.gyro = gimbal_gyro_subs.GetData();
+        gimbal_gyro_subs.StartWaiting();
+      }
+      gimbal->pos_aim_.Yaw() +=
+          (gimbal->gimbal_cmd_.yaw - static_cast<float>(M_2PI)) *
+          gimbal->dt_.ToSecondf() * 10;
+      gimbal->pos_aim_.Pitch() +=
+          (gimbal->gimbal_cmd_.pit - -static_cast<float>(M_2PI)) *
+          gimbal->dt_.ToSecondf() * 10;
 
-      if (euler_suber.Available()) {
-        gimbal->euler_ = euler_suber.GetData();
-        euler_suber.StartWaiting();
-      }
-      if (gyro_suber.Available()) {
-        gimbal->gyro_data_ = gyro_suber.GetData();
-        gyro_suber.StartWaiting();
-      }
-      gimbal->mutex_.Lock();
-      gimbal->Update();
-      gimbal->UpdateSetpointFromCMD();
-      gimbal->SelfResolution();
-      gimbal->GravityCompensation(gimbal->accl_data_);
-      gimbal->mutex_.Unlock();
-      gimbal->OutputToDynamics();
+      gimbal->mtx_.Lock();
 
-      auto last_time = LibXR::Timebase::GetMilliseconds();
-      gimbal->thread_.SleepUntil(last_time, 2.0f);
+      gimbal->UpdateFeedBack();
+      /* [TODO] 加上判断控制源 */
+      gimbal->GetGravityFeedForward(gimbal->tff_gravity_,
+                                    gimbal->current_state_);
+      gimbal->GetMotionalFeedForward(gimbal->tff_motion_,
+                                     gimbal->current_state_);
+      gimbal->Control();
+
+      gimbal->mtx_.Unlock();
+      LibXR::Thread::Sleep(1); /* 1KHz电流环 */
     }
   }
 
   /**
-   * @brief 根据外部命令(如遥控器)更新云台的目标设定点
+   * @brief 用来获取yaw和pitch重力补偿的函数
    *
+   * @param tff_buf 存放重力补偿扭矩的地方
+   * @param current_state 描述云台当前的状态
    */
-  void UpdateSetpointFromCMD() {
-    float gimbal_yaw_cmd = cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED;
-    float gimbal_pitch_cmd = cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED;
-
-    const float PITCH_ERR = target_angle_pitch_ - euler_.Pitch();
-    const float ENCODER_DELTA_MAX_PIT = gimbal_max_ - motor_can2_.GetRPM(5);
-    const float ENCODER_DELTA_MIN_PIT = gimbal_min_ - motor_can2_.GetRPM(5);
-    const float DELTA_MAX_PIT = ENCODER_DELTA_MAX_PIT - PITCH_ERR;
-    const float DELTA_MIN_PIT = ENCODER_DELTA_MIN_PIT - PITCH_ERR;
-    gimbal_yaw_cmd = std::clamp(gimbal_yaw_cmd, DELTA_MIN_PIT, DELTA_MAX_PIT);
-
-    target_angle_yaw_ += gimbal_yaw_cmd;
-    target_angle_pitch_ += gimbal_pitch_cmd;
+  void GetGravityFeedForward(TorqueFeedForward &tff_buf,
+                             const State &current_state) {
+    /* [TODO] 力控云台用的，在这里算重力前馈 */
   }
 
   /**
-   * @brief 更新电机状态，通常在主循环中被调用
+   * @brief 用来获取yaw和pitch向心力补偿的函数（可能不需要这个函数？）
    *
+   * @param tff_buf 存放补偿扭矩的地方
+   * @param current_state 描述云台当前的状态
    */
-  void Update() {
-    motor_can1_.Update();
-    motor_can2_.Update();
+  void GetMotionalFeedForward(TorqueFeedForward &tff_buf,
+                              const State &current_state) {
+    /* 力控云台用的，在这里算运动带来的前馈扭矩 */
   }
 
   /**
-   * @brief 自我解算函数，获取云台当前的角度和角速度
+   * @brief 更新反馈和dt
    *
    */
-  void SelfResolution() {
-    prev_omega_pitch_ = now_omega_pitch_;
-    prev_omega_yaw_ = now_omega_yaw_;
-    now_angle_pitch_ = motor_can2_.GetRPM(5);
-    now_angle_yaw_ = motor_can1_.GetRPM(6);
-    now_omega_pitch_ = motor_can2_.GetRPM(5);
-    now_omega_yaw_ = motor_can1_.GetRPM(6);
+  void UpdateFeedBack() {
+    this->now_ = LibXR::Timebase::GetMilliseconds();
+    this->dt_ = this->now_ - this->last_wakeup_;
+    this->last_wakeup_ = this->now_;
+
+    this->motor_yaw_->Update();
+    this->motor_pitch_->Update();
+
+    this->current_state_.yaw_feedback_.angle = this->motor_yaw_->GetAngle();
+    this->current_state_.yaw_feedback_.speed = this->motor_yaw_->GetOmega();
+    this->current_state_.yaw_feedback_.torque =
+        this->motor_yaw_->KGetTorque() * this->motor_yaw_->GetCurrent();
+
+    this->current_state_.pitch_feedback_.angle = this->motor_pitch_->GetAngle();
+    this->current_state_.pitch_feedback_.speed = this->motor_pitch_->GetOmega();
+    this->current_state_.pitch_feedback_.torque =
+        this->motor_yaw_->KGetTorque() * this->motor_pitch_->GetCurrent();
   }
 
   /**
-   * @brief 根据IMU加速度数据计算重力补偿力矩
-   * @details
-   * 计算由重力和外部加速度在云台 Pitch 与 Yaw 轴上产生的前馈补偿力矩，
-   * 并把惯性项（I·α + ω × (I·ω)）加入补偿，以改善动态响应。
+   * @brief 这个函数用来控制云台运动，内部只负责跟随pos_aim_这个变量
    *
-   * 核心思想:
-   * 1) 坐标变换：IMU -> Pitch -> Yaw
-   * 2) 力矩计算：τ = r × (-m·a)，取轴向分量
-   * 3) 惯性项：I·α + ω × (I·ω)
-   * 4) 合成：torque = tau_g + tau_i
-   *
-   * @param accl_data_ 从IMU获取的加速度数据 (m/s^2)，在IMU坐标系下表示。
    */
-  void GravityCompensation(Eigen::Matrix<float, 3, 1> &accl_data_) {
-    // 构造 Pitch->Yaw 旋转矩阵
-    const float COS_P = std::cos(now_angle_pitch_);
-    const float SIN_P = std::sin(now_angle_pitch_);
-    Eigen::Matrix<float, 3, 3> r_yaw_from_pitch;
-    r_yaw_from_pitch << COS_P, 0.0f, SIN_P, 0.0f, 1.0f, 0.0f, -SIN_P, 0.0f,
-        COS_P;
+  void Control() {
+    this->pos_aim_.Pitch() =
+        std::clamp(this->pos_aim_.Pitch(), this->GIMBALPARAM.imu_pitch_min,
+                   this->GIMBALPARAM.imu_pitch_max);
+    /* 确定一下欧拉角和电机的反馈正不正常 */
+    this->motor_yaw_->TorqueControl(
+        this->pid_yaw_speed_.Calculate(
+            this->pid_yaw_angle_.Calculate(this->current_state_.euler.Yaw(),
+                                           this->pos_aim_.Yaw(),
+                                           this->dt_.ToSecondf()),
+            this->motor_yaw_->GetOmega(), this->dt_.ToSecondf()),
+        1);
 
-    // 坐标变换：IMU -> Pitch -> Yaw
-    Eigen::Matrix<float, 3, 1> accel_in_pitch =
-        rotation_pitch_from_imu_ * accl_data_;
-    Eigen::Matrix<float, 3, 1> accel_in_yaw = r_yaw_from_pitch * accel_in_pitch;
-
-    // 质心向量
-    Eigen::Matrix<float, 3, 1> r_pitch;
-    r_pitch << radius_pitch_to_center_of_mass_.x(),
-        radius_pitch_to_center_of_mass_.y(),
-        radius_pitch_to_center_of_mass_.z();
-
-    // 重力力矩：tau_g = r × (-m·a)
-    float tau_g_pitch =
-        (r_pitch.cross(-gimbal_pitch_mass_ * accel_in_pitch))(1);
-
-    Eigen::Matrix<float, 3, 1> r_yaw_to_pitch;
-    r_yaw_to_pitch << radius_yaw_to_pitch_.x(), radius_yaw_to_pitch_.y(),
-        radius_yaw_to_pitch_.z();
-    Eigen::Matrix<float, 3, 1> r_yaw_to_center =
-        r_yaw_to_pitch + r_yaw_from_pitch * r_pitch;
-    float tau_g_yaw =
-        (r_yaw_to_center.cross(-gimbal_pitch_mass_ * accel_in_yaw))(2);
-
-    // 惯性项：I·α + ω × (I·ω)
-    float dt_seconds = static_cast<float>(dt_ * 1e-6f);
-    float alpha_pitch =
-        (dt_seconds > 0.0f)
-            ? (now_omega_pitch_ - prev_omega_pitch_) / dt_seconds
-            : 0.0f;
-    float alpha_yaw = (dt_seconds > 0.0f)
-                          ? (now_omega_yaw_ - prev_omega_yaw_) / dt_seconds
-                          : 0.0f;
-
-    // Pitch 惯性项
-    auto i_pitch_about = inertia_pitch_.Translate(r_pitch);
-    Eigen::Matrix<float, 3, 3> i_pitch_mat =
-        static_cast<Eigen::Matrix<float, 3, 3>>(i_pitch_about);
-    Eigen::Matrix<float, 3, 1> omega_pitch_vec(0.0f, now_omega_pitch_, 0.0f);
-    float tau_i_pitch =
-        (i_pitch_mat * Eigen::Matrix<float, 3, 1>(0.0f, alpha_pitch, 0.0f) +
-         omega_pitch_vec.cross(i_pitch_mat * omega_pitch_vec))(1);
-
-    // Yaw 惯性项
-    auto i_yaw_about =
-        inertia_pitch_.Rotate(r_yaw_from_pitch).Translate(r_yaw_to_center);
-    Eigen::Matrix<float, 3, 3> i_yaw_mat =
-        static_cast<Eigen::Matrix<float, 3, 3>>(i_yaw_about);
-    Eigen::Matrix<float, 3, 1> omega_yaw_vec(0.0f, 0.0f, now_omega_yaw_);
-    float tau_i_yaw =
-        (i_yaw_mat * Eigen::Matrix<float, 3, 1>(0.0f, 0.0f, alpha_yaw) +
-         omega_yaw_vec.cross(i_yaw_mat * omega_yaw_vec))(2);
-
-    // 合成输出
-    pitch_torque_ = tau_g_pitch + tau_i_pitch;
-    yaw_torque_ = tau_g_yaw + tau_i_yaw;
+    this->motor_pitch_->TorqueControl(
+        this->pid_pitch_speed_.Calculate(
+            this->pid_pitch_angle_.Calculate(this->pos_aim_.Pitch(),
+                                             this->current_state_.euler.Pitch(),
+                                             this->dt_.ToSecondf()),
+            this->motor_pitch_->GetOmega(), this->dt_.ToSecondf()),
+        1);
   }
 
-  /**
-   * @brief 将一个值限制在给定的最大值和最小值之间
-   *
-   * @param x 要限制的值的指针
-   * @param Min 最小值
-   * @param Max 最大值
-   * @return float 限制后的值
-   */
-  float Constrain(float *x, float Min, float Max) {
-    if (*x < Min) {
-      *x = Min;
-    } else if (*x > Max) {
-      *x = Max;
-    }
-    return (*x);
-  }
-
-  /**
-   * @brief 处理电机角度的周期性，实现最近转置，避免电机在边界处反转
-   *
-   */
-  void MotorNearestTransposition() {
-    float tmp_delta_angle = 0.0f;
-    tmp_delta_angle = fmod(target_angle_yaw_ - now_angle_yaw_, 2.0f * M_PI);
-    if (tmp_delta_angle > M_PI) {
-      tmp_delta_angle -= 2.0f * M_PI;
-    } else if (tmp_delta_angle < -M_PI) {
-      tmp_delta_angle += 2.0f * M_PI;
-    }
-    target_angle_yaw_ = motor_can1_.GetRPM(6) + tmp_delta_angle;
-
-    Constrain(&target_angle_pitch_, gimbal_min_, gimbal_max_);
-    tmp_delta_angle = target_angle_pitch_ - now_angle_pitch_;
-    target_angle_pitch_ = -motor_can2_.GetRPM(5) + tmp_delta_angle;
-  }
-
-  /**
-   * @brief 计算PID输出并将其应用到电机，实现动力学控制
-   *
-   */
-  void OutputToDynamics() {
-    auto now = LibXR::Timebase::GetMicroseconds();
-    this->dt_ = (now - this->last_online_time_).ToSecondf();
-    this->last_online_time_ = now;
-    MotorNearestTransposition();
-
-    // 欧拉角 -> Pitch系下的姿态角
-    const auto [cy, sy] =
-        std::make_pair(std::cos(euler_.Yaw()), std::sin(euler_.Yaw()));
-    const auto [cp, sp] =
-        std::make_pair(std::cos(euler_.Pitch()), std::sin(euler_.Pitch()));
-    const auto [cr, sr] =
-        std::make_pair(std::cos(euler_.Roll()), std::sin(euler_.Roll()));
-
-    const Eigen::Matrix3f R_CURRENT =
-        rotation_pitch_from_imu_.transpose() *
-        (Eigen::Matrix3f() << cy * cp, cy * sp * sr - sy * cr,
-         cy * sp * cr + sy * sr, sy * cp, sy * sp * sr + cy * cr,
-         sy * sp * cr - cy * sr, -sp, cp * sr, cp * cr)
-            .finished();
-
-    const float CURRENT_PITCH = std::asin(-R_CURRENT(2, 0));
-    const float CURRENT_YAW = std::atan2(R_CURRENT(1, 0), R_CURRENT(0, 0));
-
-    LibXR::STDIO::Printf("原始欧拉角(deg) - Yaw:%.2f Pitch:%.2f Roll:%.2f\n",
-                         euler_.Yaw(), euler_.Pitch(), euler_.Roll());
-    LibXR::STDIO::Printf("Pitch系欧拉角(deg) - Yaw:%.2f Pitch:%.2f\n",
-                         CURRENT_YAW, CURRENT_PITCH);
-
-    // PID + 输出
-    const float OUTPUT_YAW = std::clamp(
-        pid_omega_yaw_.Calculate(
-            pid_angle_yaw_.Calculate(target_angle_yaw_, CURRENT_YAW, dt_),
-            gyro_data_.z(), dt_) +
-            yaw_torque_,
-        -max_current_, max_current_);
-
-    const float OUTPUT_PITCH = std::clamp(
-        pid_omega_pitch_.Calculate(
-            pid_angle_pitch_.Calculate(target_angle_pitch_, CURRENT_PITCH, dt_),
-            gyro_data_.x(), dt_) +
-            pitch_torque_,
-        -max_current_, max_current_);
-
-    motor_can1_.SetCurrent(6, OUTPUT_YAW);
-    motor_can2_.SetCurrent(5, OUTPUT_PITCH);
-  }
-
-  /**
-   * @brief 监控函数 (在此应用中未使用)
-   *
-   */
   void OnMonitor() override {}
 
  private:
-  //! 云台命令Topic名称
+  /* PID */
+  LibXR::PID<float> pid_yaw_speed_;
+  LibXR::PID<float> pid_yaw_angle_;
+  LibXR::PID<float> pid_pitch_speed_;
+  LibXR::PID<float> pid_pitch_angle_;
+
+  /* 扭矩补偿类 */
+  TorqueFeedForward tff_gravity_; /* 重力矩 */
+  TorqueFeedForward tff_motion_;  /* I * a */
+
+  /* 电机 */
+  typename MotorType::RMMotor *motor_yaw_;
+  typename MotorType::RMMotor *motor_pitch_;
+
+  /* 云台定义 */
+  const GimbalParam GIMBALPARAM;
+
+  /* 控制相关的变量 */
   const char *gimbal_cmd_name_;
-  //! 加速度计数据Topic名称
   const char *accl_name_;
-  //! 欧拉角数据Topic名称
   const char *euler_name_;
-  //! 陀螺仪数据Topic名称
   const char *gyro_name_;
+  LibXR::EulerAngle<float> pos_aim_; /* CycleValue */
+  State current_state_;              /* 当前云台的状态 */
+  CMD::GimbalCMD gimbal_cmd_;
 
-  //! 当前Yaw轴角度
-  float now_angle_yaw_ = 0.0f;
-  //! 当前Pitch轴角度
-  float now_angle_pitch_ = 0.0f;
-  //! 目标Yaw轴角度
-  float target_angle_yaw_ = 0.0f;
-  //! 目标Pitch轴角度
-  float target_angle_pitch_ = 0.0f;
-  //! 当前Yaw轴角速度
-  float now_omega_yaw_ = 0.0f;
-  //! 当前Pitch轴角速度
-  float now_omega_pitch_ = 0.0f;
-  //! Pitch轴补偿力矩
-  float pitch_torque_ = 0.0f;
-  //! Yaw轴补偿力矩
-  float yaw_torque_ = 0.0f;
-  //! Pitch轴电机中心(零点)位置
-  float gimbal_pitch_center_ = 0.0f;
-  //! Yaw轴电机中心(零点)位置
-  float gimbal_yaw_center_ = 0.0f;
-  //! Pitch轴最大角度(行程上限)
-  float gimbal_max_ = 0.0f;
-  //! Pitch轴最小角度(行程下限)
-  float gimbal_min_ = 0.0f;
-  //! 上次Pitch轴角速度
-  float prev_omega_pitch_ = 0.0f;
-  //! 上次Yaw轴角速度
-  float prev_omega_yaw_ = 0.0f;
-
-  //! Pitch轴固连负载的质量 (kg)
-  float gimbal_pitch_mass_ = 0.0f;
-  //! P系下, Pitch轴心->负载重心 的向量 (m)
-  LibXR::Position<float> radius_pitch_to_center_of_mass_{0.0f, 0.0f, 0.0f};
-  //! Y系下, Yaw轴心->Pitch轴心 的向量 (m)
-  LibXR::Position<float> radius_yaw_to_pitch_{0.0f, 0.0f, 0.0f};
-  //! IMU坐标系到Pitch坐标系的旋转矩阵
-  Eigen::Matrix<float, 3, 3> rotation_pitch_from_imu_{
-      0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-  //! IMU加速度数据
-  LibXR::Position<float> imu_acceleration_{0.0f, 0.0f, 0.0f};
-  //! 质心处惯性对象（Pitch系）
-  LibXR::Inertia<float> inertia_pitch_;
-
-  //! 电机最大输出电流
-  float max_current_ = 1.0f;
-
-  //! Yaw轴角度环PID控制器
-  LibXR::PID<float> pid_angle_yaw_;
-  //! Pitch轴角度环PID控制器
-  LibXR::PID<float> pid_angle_pitch_;
-  //! Yaw轴角速度环PID控制器
-  LibXR::PID<float> pid_omega_yaw_;
-  //! Pitch轴角速度环PID控制器
-  LibXR::PID<float> pid_omega_pitch_;
-
-  //! CAN1上的电机实例 (Yaw)
-  Motor<MotorType> &motor_can1_;
-  //! CAN2上的电机实例 (Pitch)
-  Motor<MotorType> &motor_can2_;
-
-  //! 命令模块实例
-  CMD &cmd_;
-  //! 云台命令数据
-  CMD::GimbalCMD cmd_data_;
-
-  //! 云台控制线程
+  /* 线程管理 */
+  LibXR::MillisecondTimestamp now_ = 0;
+  LibXR::MillisecondTimestamp last_wakeup_ = 0;
+  LibXR::MillisecondTimestamp::Duration dt_ = 0;
+  LibXR::Mutex mtx_;
   LibXR::Thread thread_;
 
-  LibXR::MicrosecondTimestamp last_online_time_ = 0;
-  float dt_ = 0;
+  /* 工具函数 */
 
-  //! 陀螺仪和加速度计数据
-  Eigen::Matrix<float, 3, 1> gyro_data_, accl_data_;
-  //! 欧拉角数据
-  LibXR::EulerAngle<float> euler_;
-
-  LibXR::Mutex mutex_;
+  /**
+   * @brief 用来把x映射到[lo_after, hi_after]的函数
+   *
+   * @param x
+   * @param lo_before 映射前的下限
+   * @param hi_before 映射前的上限999
+   * @param lo_after
+   * @param hi_after
+   * @return float
+   */
+  float LinearMap(float x, float lo_before, float hi_before, float lo_after,
+                  float hi_after) {
+    return ((x - lo_before) / (hi_before - lo_before)) * (hi_after - lo_after) +
+           lo_after;
+  }
 };
