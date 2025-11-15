@@ -228,7 +228,7 @@ class Gimbal : public LibXR::Application {
       gimbal->mtx_.Lock();
 
       gimbal->UpdateFeedBack();
-      //TODO: 加上判断控制源
+      // TODO: 加上判断控制源
       gimbal->GetGravityFeedForward(gimbal->tff_gravity_,
                                     gimbal->current_state_);
       gimbal->GetMotionalFeedForward(gimbal->tff_motion_,
@@ -236,30 +236,8 @@ class Gimbal : public LibXR::Application {
       gimbal->Control();
 
       gimbal->mtx_.Unlock();
-      LibXR::Thread::SleepUntil(last_time,2); /* 1KHz电流环 */
+      LibXR::Thread::SleepUntil(last_time, 2); /* 1KHz电流环 */
     }
-  }
-
-  /**
-   * @brief 用来获取yaw和pitch重力补偿的函数
-   *
-   * @param tff_buf 存放重力补偿扭矩的地方
-   * @param current_state 描述云台当前的状态
-   */
-  void GetGravityFeedForward(TorqueFeedForward &tff_buf,
-                             const State &current_state) {
-    //TODO:力控云台用的，在这里算重力前馈
-  }
-
-  /**
-   * @brief 用来获取yaw和pitch向心力补偿的函数（可能不需要这个函数？）
-   *
-   * @param tff_buf 存放补偿扭矩的地方
-   * @param current_state 描述云台当前的状态
-   */
-  void GetMotionalFeedForward(TorqueFeedForward &tff_buf,
-                              const State &current_state) {
-    //TODO:力控云台用的，在这里算运动带来的前馈扭矩
   }
 
   /**
@@ -267,6 +245,7 @@ class Gimbal : public LibXR::Application {
    *
    */
   void UpdateFeedBack() {
+    // TODO: 通过旋转矩阵调整pit，yaw极性
     this->now_ = LibXR::Timebase::GetMilliseconds();
     this->dt_ = this->now_ - this->last_wakeup_;
     this->last_wakeup_ = this->now_;
@@ -282,7 +261,29 @@ class Gimbal : public LibXR::Application {
     this->current_state_.pitch_feedback_.angle = this->motor_pitch_->GetAngle();
     this->current_state_.pitch_feedback_.speed = this->motor_pitch_->GetOmega();
     this->current_state_.pitch_feedback_.torque =
-        this->motor_yaw_->KGetTorque() * this->motor_pitch_->GetCurrent();
+        this->motor_pitch_->KGetTorque() * this->motor_pitch_->GetCurrent();
+  }
+
+  /**
+   * @brief 用来获取yaw和pitch重力补偿的函数
+   *
+   * @param tff_buf 存放重力补偿扭矩的地方
+   * @param current_state 描述云台当前的状态
+   */
+  void GetGravityFeedForward(TorqueFeedForward &tff_buf,
+                             const State &current_state) {
+    // TODO:力控云台用的，在这里算重力前馈
+  }
+
+  /**
+   * @brief 用来获取yaw和pitch向心力补偿的函数（可能不需要这个函数？）
+   *
+   * @param tff_buf 存放补偿扭矩的地方
+   * @param current_state 描述云台当前的状态
+   */
+  void GetMotionalFeedForward(TorqueFeedForward &tff_buf,
+                              const State &current_state) {
+    // TODO:力控云台用的，在这里算运动带来的前馈扭矩
   }
 
   /**
@@ -293,7 +294,7 @@ class Gimbal : public LibXR::Application {
     this->pos_aim_.Pitch() =
         std::clamp(this->pos_aim_.Pitch(), this->GIMBALPARAM.imu_pitch_min,
                    this->GIMBALPARAM.imu_pitch_max);
-    //TODO:确定一下欧拉角和电机的反馈正不正常;
+    // TODO:确定一下欧拉角和电机的反馈正不正常;
     this->motor_yaw_->TorqueControl(
         this->pid_yaw_speed_.Calculate(
             this->pid_yaw_angle_.Calculate(this->current_state_.euler.Yaw(),
