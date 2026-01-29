@@ -329,15 +329,28 @@ class Gimbal : public LibXR::Application {
    *
    */
   void OutputToDynamics() {
-    if (current_mode_ != RELAX) {
+    if ((this->enable_flag_ == true) && (this->dm_motor_flag_ == false)) {
+      for (int i = 0; i < 2; i++) {
+        this->dm_motor_flag_ = true;
         if constexpr (std::is_same_v<MotorTypeYaw, DMMotor>) {
-          if(motor_yaw_->GetState() == 0) {motor_yaw_->Enable();}
-          else {motor_yaw_->ClearError(); motor_yaw_->Enable();}
+          if (motor_yaw_->GetState() == 0) {
+            motor_yaw_->Enable();
+          } else if (motor_yaw_->GetState() == 1) {
+          } else {
+            motor_yaw_->ClearError();
+            motor_yaw_->Enable();
+          }
         }
         if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
-          if(motor_pitch_->GetState() == 0) {motor_pitch_->Enable();}
-          else {motor_pitch_->ClearError(); motor_pitch_->Enable();}
+          if (motor_pitch_->GetState() == 0) {
+            motor_pitch_->Enable();
+          } else if (motor_pitch_->GetState() == 1) {
+          } else {
+            motor_pitch_->ClearError();
+            motor_pitch_->Enable();
+          }
         }
+      }
     }
     switch (current_mode_) {
       case RELAX: {
@@ -352,6 +365,8 @@ class Gimbal : public LibXR::Application {
         } else if constexpr (std::is_same_v<MotorTypePitch, RMMotor>) {
           motor_pitch_->Relax();
         }
+        enable_flag_ = false;
+        dm_motor_flag_ = false;
       } break;
       case INDEPENDENT: {
         /*串级PID位置外环 角速度内环 + 力矩前馈*/
@@ -395,6 +410,7 @@ class Gimbal : public LibXR::Application {
         } else if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
               motor_pitch_->MITControl(0, 0, 0, 0, output_pitch_);
         }
+        enable_flag_ = true;
       } break;
       case AUTOAIM: {
         tar_param_.target_yaw_omega_ = pid_yaw_angle_.Calculate(
@@ -426,6 +442,7 @@ class Gimbal : public LibXR::Application {
         } else if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
           motor_pitch_->MITControl(0, 0, 0, 0, output_pitch_);
         }
+        enable_flag_ = true;
       } break;
       default:
         break;
@@ -531,6 +548,9 @@ class Gimbal : public LibXR::Application {
   Limit limit_;
   NowParam now_param_;
   TarParam tar_param_;
+
+  bool enable_flag_ = false;
+  bool dm_motor_flag_ = false;
 
   float last_yaw_angle_ = 0.0f;
   float last_pitch_angle_ = 0.0f;
