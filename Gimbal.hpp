@@ -174,7 +174,6 @@ class Gimbal : public LibXR::Application {
     gyro_suber.StartWaiting();
 
     while (true) {
-      auto last_time = LibXR::Timebase::GetMilliseconds();
 
       gimbal->mutex_.Lock();
       if (cmd_suber.Available()) {
@@ -194,7 +193,7 @@ class Gimbal : public LibXR::Application {
       gimbal->SetpointFromCMD();
       gimbal->mutex_.Unlock();
       gimbal->OutputToDynamics();
-      gimbal->thread_.SleepUntil(last_time, 2.0f);
+      gimbal->thread_.Sleep(2.0f);
     }
   }
 
