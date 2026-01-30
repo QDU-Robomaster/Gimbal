@@ -193,7 +193,7 @@ class Gimbal : public LibXR::Application {
       gimbal->SetpointFromCMD();
       gimbal->mutex_.Unlock();
       gimbal->OutputToDynamics();
-      gimbal->thread_.Sleep(2.0f);
+      gimbal->thread_.Sleep(2);
     }
   }
 
