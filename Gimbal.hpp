@@ -58,6 +58,7 @@ depends: []
 #include <cstdint>
 
 #include "CMD.hpp"
+#include "Motor.hpp"
 #include "DMMotor.hpp"
 #include "RMMotor.hpp"
 #include "app_framework.hpp"
@@ -67,17 +68,11 @@ depends: []
 static constexpr float GIMBAL_MAX_SPEED = static_cast<float>(M_2PI) * 1.5f;
 static constexpr float TORQUE_CONSTANT = 0.741f;
 
-template <typename MotorTypePitch, typename MotorTypeYaw>
+enum class GimbalEvent : uint8_t { SET_MODE_RELAX, SET_MODE_INDEPENDENT, SET_MODE_AUTOAIM };
+enum class GimbalMode : uint8_t { RELAX, INDEPENDENT, AUTOAIM };
+
 class Gimbal : public LibXR::Application {
  public:
-  enum class GimbalEvent : uint8_t {
-    SET_MODE_RELAX,
-    SET_MODE_INDEPENDENT,
-    SET_MODE_AUTOAIM,
-  };
-
-  typedef enum : uint8_t { RELAX, INDEPENDENT, AUTOAIM } GimbalMode;
-
   struct NowParam {
     float now_pit_angle_ = 0.0f;
     float now_pit_omega_ = 0.0f;
@@ -121,7 +116,9 @@ class Gimbal : public LibXR::Application {
          LibXR::PID<float>::Param pid_pit_angle_param,
          LibXR::PID<float>::Param pid_yaw_omega_param,
          LibXR::PID<float>::Param pid_pit_omega_param,
-         MotorTypePitch *motor_pit, MotorTypeYaw *motor_yaw, Limit limit)
+         Motor *motor_pit,
+         Motor *motor_yaw,
+         Limit limit)
       : cmd_(cmd),
         pid_yaw_angle_(pid_yaw_angle_param),
         pid_pit_angle_(pid_pit_angle_param),
@@ -133,11 +130,27 @@ class Gimbal : public LibXR::Application {
     UNUSED(hw);
     UNUSED(app);
 
+    motor_yaw_cmd_.mode = Motor::ControlMode::MODE_TORQUE;
+    motor_yaw_cmd_.reduction_ratio = 1.0f;
+    motor_yaw_cmd_.torque = 0.0f;
+    motor_yaw_cmd_.position = 0.0f;
+    motor_yaw_cmd_.velocity = 0.0f;
+    motor_yaw_cmd_.kp = 0.0f;
+    motor_yaw_cmd_.kd = 0.0f;
+
+    motor_pit_cmd_.mode = Motor::ControlMode::MODE_TORQUE;
+    motor_pit_cmd_.reduction_ratio = 1.0f;
+    motor_pit_cmd_.torque = 0.0f;
+    motor_pit_cmd_.position = 0.0f;
+    motor_pit_cmd_.velocity = 0.0f;
+    motor_pit_cmd_.kp = 0.0f;
+    motor_pit_cmd_.kd = 0.0f;
+
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Gimbal *gimbal, uint32_t event_id) {
           UNUSED(in_isr);
           UNUSED(event_id);
-          gimbal->SetMode(RELAX);
+          gimbal->SetMode(GimbalMode::RELAX);
         },
         this);
 
@@ -174,7 +187,6 @@ class Gimbal : public LibXR::Application {
     gyro_suber.StartWaiting();
 
     while (true) {
-      auto last_time = LibXR::Timebase::GetMilliseconds();
 
       gimbal->mutex_.Lock();
       if (cmd_suber.Available()) {
@@ -194,7 +206,7 @@ class Gimbal : public LibXR::Application {
       gimbal->SetpointFromCMD();
       gimbal->mutex_.Unlock();
       gimbal->OutputToDynamics();
-      gimbal->thread_.SleepUntil(last_time, 2.0f);
+      gimbal->thread_.Sleep(2);
     }
   }
 
@@ -202,8 +214,8 @@ class Gimbal : public LibXR::Application {
    * @brief 更新函数
    */
   void Update() {
-    motor_yaw_->Update();
-    motor_pit_->Update();
+    motor_yaw_feedback_ = motor_yaw_->GetFeedback();
+    motor_pit_feedback_ = motor_pit_->GetFeedback();
 
     auto now = LibXR::Timebase::GetMicroseconds();
     this->dt_ = (now - this->last_online_time_).ToSecondf();
@@ -220,8 +232,8 @@ class Gimbal : public LibXR::Application {
     last_yaw_omega_ = now_param_.now_yaw_omega_;
     last_pit_omega_ = now_param_.now_pit_omega_;
 
-    float yaw_angle = motor_yaw_->GetAngle();
-    float pit_angle = motor_pit_->GetAngle();
+  float yaw_angle = motor_yaw_feedback_.abs_angle;
+  float pit_angle = motor_pit_feedback_.abs_angle;
 
     topic_yaw_angle_.Publish(yaw_angle);
     topic_pit_angle_.Publish(pit_angle);
@@ -263,29 +275,29 @@ class Gimbal : public LibXR::Application {
     if (limit_.max_pit_angle_ != limit_.min_pit_angle_) {
       if (limit_.reverse_pit_ == true) {
         const float ENCODER_DELTA_MAX_PIT =
-            LibXR::CycleValue(motor_pit_->GetAngle()) -
-            this->limit_.max_pit_angle_;
+          LibXR::CycleValue(motor_pit_feedback_.abs_angle) -
+          this->limit_.max_pit_angle_;
         const float ENCODER_DELTA_MIN_PIT =
-            LibXR::CycleValue(motor_pit_->GetAngle()) -
-            this->limit_.min_pit_angle_;
+          LibXR::CycleValue(motor_pit_feedback_.abs_angle) -
+          this->limit_.min_pit_angle_;
         const float PIT_ERR =
-            tar_param_.target_pit_angle_ - now_param_.now_pit_angle_;
+          tar_param_.target_pit_angle_ - now_param_.now_pit_angle_;
         const float DELTA_MAX_PIT = ENCODER_DELTA_MAX_PIT - PIT_ERR;
         const float DELTA_MIN_PIT = ENCODER_DELTA_MIN_PIT - PIT_ERR;
-        tar_param_.target_pit_angle_ = std::clamp(
+          tar_param_.target_pit_angle_ = std::clamp(
             tar_param_.target_pit_angle_, DELTA_MIN_PIT, DELTA_MAX_PIT);
       } else {
         const float ENCODER_DELTA_MAX_PIT =
-            this->limit_.max_pit_angle_ -
-            LibXR::CycleValue(motor_pit_->GetAngle());
+          this->limit_.max_pit_angle_ -
+          LibXR::CycleValue(motor_pit_feedback_.abs_angle);
         const float ENCODER_DELTA_MIN_PIT =
-            this->limit_.min_pit_angle_ -
-            LibXR::CycleValue(motor_pit_->GetAngle());
+          this->limit_.min_pit_angle_ -
+          LibXR::CycleValue(motor_pit_feedback_.abs_angle);
         const float PIT_ERR =
-            tar_param_.target_pit_angle_ - now_param_.now_pit_angle_;
+          tar_param_.target_pit_angle_ - now_param_.now_pit_angle_;
         const float DELTA_MAX_PIT = ENCODER_DELTA_MAX_PIT - PIT_ERR;
         const float DELTA_MIN_PIT = ENCODER_DELTA_MIN_PIT - PIT_ERR;
-        tar_param_.target_pit_angle_ = std::clamp(
+          tar_param_.target_pit_angle_ = std::clamp(
             tar_param_.target_pit_angle_, DELTA_MIN_PIT, DELTA_MAX_PIT);
       }
     }
@@ -299,19 +311,19 @@ class Gimbal : public LibXR::Application {
     if ((this->enable_flag_ == true) && (this->dm_motor_flag_ == false)) {
       for (int i = 0; i < 2; i++) {
         this->dm_motor_flag_ = true;
-        if constexpr (std::is_same_v<MotorTypeYaw, DMMotor>) {
-          if (motor_yaw_->GetState() == 0) {
+        if (motor_yaw_cmd_.mode == Motor::ControlMode::MODE_MIT) {
+          if (motor_yaw_->GetFeedback().state == 0) {
             motor_yaw_->Enable();
-          } else if (motor_yaw_->GetState() == 1) {
+          } else if (motor_yaw_feedback_.state == 1) {
           } else {
             motor_yaw_->ClearError();
             motor_yaw_->Enable();
           }
         }
-        if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
-          if (motor_pit_->GetState() == 0) {
+        if (motor_pit_cmd_.mode == Motor::ControlMode::MODE_MIT) {
+          if (motor_pit_feedback_.state == 0) {
             motor_pit_->Enable();
-          } else if (motor_pit_->GetState() == 1) {
+          } else if (motor_pit_feedback_.state == 1) {
           } else {
             motor_pit_->ClearError();
             motor_pit_->Enable();
@@ -320,83 +332,94 @@ class Gimbal : public LibXR::Application {
       }
     }
     switch (current_mode_) {
-      case RELAX: {
-        if constexpr (std::is_same_v<MotorTypeYaw, DMMotor>) {
+      case GimbalMode::RELAX: {
+        if (motor_yaw_cmd_.mode == Motor::ControlMode::MODE_MIT) {
           motor_yaw_->Disable();
-        } else if constexpr (std::is_same_v<MotorTypeYaw, RMMotor>) {
+        } else {
           motor_yaw_->Relax();
         }
 
-        if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
+        if (motor_pit_cmd_.mode == Motor::ControlMode::MODE_MIT) {
           motor_pit_->Disable();
-        } else if constexpr (std::is_same_v<MotorTypePitch, RMMotor>) {
+        } else {
           motor_pit_->Relax();
         }
         enable_flag_ = false;
         dm_motor_flag_ = false;
       } break;
-      case INDEPENDENT: {
+      case GimbalMode::INDEPENDENT: {
         /*串级PID位置外环 角速度内环 + 力矩前馈*/
         /*位置环+前馈*/
-        tar_param_.target_yaw_omega_ = pid_yaw_angle_.Calculate(
-            tar_param_.target_yaw_angle_, now_param_.now_yaw_angle_, dt_);
+        tar_param_.target_yaw_omega_ =
+            pid_yaw_angle_.Calculate(
+                tar_param_.target_yaw_angle_,
+                now_param_.now_yaw_angle_,
+                dt_);
         output_yaw_ =
-            FeedforwardControl(tar_param_.target_yaw_omega_,
-                               now_param_.now_yaw_omega_, dt_,
-                               limit_.J_yaw_);
+            FeedforwardControl(
+                tar_param_.target_yaw_omega_,
+                now_param_.now_yaw_omega_,
+                dt_,
+                limit_.J_yaw_);
 
-        tar_param_.target_pit_omega_ = pid_pit_angle_.Calculate(
-            tar_param_.target_pit_angle_, now_param_.now_pit_angle_, dt_);
+        tar_param_.target_pit_omega_ =
+            pid_pit_angle_.Calculate(
+                tar_param_.target_pit_angle_,
+                now_param_.now_pit_angle_,
+                dt_);
         output_pit_ =
-            FeedforwardControl(tar_param_.target_pit_omega_,
-                               now_param_.now_pit_omega_, dt_,
-                               limit_.J_pit_);
+            FeedforwardControl(
+                tar_param_.target_pit_omega_,
+                now_param_.now_pit_omega_,
+                dt_,
+                limit_.J_pit_);
         /*速度环计算*/
-        output_yaw_ += (pid_yaw_omega_.Calculate(
-            tar_param_.target_yaw_omega_,
-            gyro_data_.z(), dt_));
-        output_pit_ += (pid_pit_omega_.Calculate(
-            tar_param_.target_pit_omega_,
-            gyro_data_.y(), dt_));
-        /*力矩输出到电机*/
-        if constexpr (std::is_same_v<MotorTypeYaw, RMMotor>) {
-          motor_yaw_->TorqueControl(output_yaw_, 1.0f);
-        } else if constexpr (std::is_same_v<MotorTypeYaw, DMMotor>) {
-          motor_yaw_->MITControl(0, 0, 0, 0, output_yaw_);
-        }
+        output_yaw_ +=
+            (pid_yaw_omega_.Calculate(
+                tar_param_.target_yaw_omega_,
+                gyro_data_.z(),
+                dt_));
+        output_pit_ +=
+            (pid_pit_omega_.Calculate(
+                tar_param_.target_pit_omega_,
+                gyro_data_.y(),
+                dt_));
 
-        if constexpr (std::is_same_v<MotorTypePitch, RMMotor>) {
-          motor_pit_->TorqueControl(output_pit_, 1.0f);
-        } else if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
-          motor_pit_->MITControl(0, 0, 0, 0, output_pit_);
-        }
+        motor_yaw_cmd_.torque = output_yaw_;
+        motor_yaw_->Control(motor_yaw_cmd_);
+        motor_pit_cmd_.torque = output_pit_;
+        motor_pit_->Control(motor_pit_cmd_);
+
         enable_flag_ = true;
       } break;
-      case AUTOAIM: {
-        tar_param_.target_yaw_omega_ = pid_yaw_angle_.Calculate(
-            tar_param_.target_yaw_angle_, now_param_.now_yaw_angle_, dt_);
-        tar_param_.target_pit_omega_ = pid_pit_angle_.Calculate(
-            tar_param_.target_pit_angle_, now_param_.now_pit_angle_, dt_);
+      case GimbalMode::AUTOAIM: {
+        tar_param_.target_yaw_omega_ =
+            pid_yaw_angle_.Calculate(
+                tar_param_.target_yaw_angle_,
+                now_param_.now_yaw_angle_,
+                dt_);
+        tar_param_.target_pit_omega_ =
+            pid_pit_angle_.Calculate(
+                tar_param_.target_pit_angle_,
+                now_param_.now_pit_angle_,
+                dt_);
 
-        output_yaw_ = (pid_yaw_omega_.Calculate(
-            tar_param_.target_yaw_omega_,
-            gyro_data_.z(), dt_));
-        output_pit_ = (pid_pit_omega_.Calculate(
-            tar_param_.target_pit_omega_,
-            gyro_data_.y(), dt_));
+        output_yaw_ =
+            pid_yaw_omega_.Calculate(
+                tar_param_.target_yaw_omega_,
+                gyro_data_.z(),
+                dt_);
+    output_pit_ =
+      pid_pit_omega_.Calculate(
+        tar_param_.target_pit_omega_,
+        gyro_data_.y(),
+        dt_);
 
-        if constexpr (std::is_same_v<MotorTypeYaw, RMMotor>) {
-          motor_yaw_->TorqueControl(output_yaw_, 1.0f);
-        } else if constexpr (std::is_same_v<MotorTypeYaw, DMMotor>) {
-          motor_yaw_->MITControl(0, 0, 0, 0, output_yaw_);
-        }
-
-        if constexpr (std::is_same_v<MotorTypePitch, RMMotor>) {
-          motor_pit_->TorqueControl(output_pit_, 1.0f);
-        } else if constexpr (std::is_same_v<MotorTypePitch, DMMotor>) {
-          motor_pit_->MITControl(0, 0, 0, 0, output_pit_);
-        }
-        enable_flag_ = true;
+  motor_yaw_cmd_.torque = output_yaw_;
+  motor_yaw_->Control(motor_yaw_cmd_);
+  motor_pit_cmd_.torque = output_pit_;
+  motor_pit_->Control(motor_pit_cmd_);
+  enable_flag_ = true;
       } break;
       default:
         break;
@@ -427,13 +450,13 @@ class Gimbal : public LibXR::Application {
    * @param mode 云台模式
    */
   void SetMode(GimbalMode mode) {
-    if (current_mode_ == RELAX) {
-      if (mode == INDEPENDENT) {
+    if (current_mode_ == GimbalMode::RELAX) {
+      if (mode == GimbalMode::INDEPENDENT) {
         tar_param_.target_yaw_angle_ = now_param_.now_yaw_angle_;
         tar_param_.target_pit_angle_ = now_param_.now_pit_angle_;
       }
-    } else if (current_mode_ == INDEPENDENT) {
-      if (mode == AUTOAIM || mode == RELAX) {
+    } else if (current_mode_ == GimbalMode::INDEPENDENT) {
+      if (mode == GimbalMode::AUTOAIM || mode == GimbalMode::RELAX) {
         tar_param_.target_yaw_angle_ = now_param_.now_yaw_angle_;
         tar_param_.target_pit_angle_ = now_param_.now_pit_angle_;
       }
@@ -472,8 +495,14 @@ class Gimbal : public LibXR::Application {
   LibXR::PID<float> pid_yaw_omega_;
   LibXR::PID<float> pid_pit_omega_;
 
-  MotorTypeYaw *motor_yaw_;
-  MotorTypePitch *motor_pit_;
+  Motor *motor_yaw_;
+  Motor *motor_pit_;
+
+  Motor::Feedback motor_yaw_feedback_;
+  Motor::Feedback motor_pit_feedback_;
+
+  Motor::MotorCmd motor_yaw_cmd_;
+  Motor::MotorCmd motor_pit_cmd_;
 
   Limit limit_;
   NowParam now_param_;
@@ -483,8 +512,8 @@ class Gimbal : public LibXR::Application {
   bool dm_motor_flag_ = false;
 
   float last_yaw_angle_ = 0.0f;
-  float last_pit_angle_ = 0.0f;
   float last_yaw_omega_ = 0.0f;
+  float last_pit_angle_ = 0.0f;
   float last_pit_omega_ = 0.0f;
 
   GimbalMode current_mode_ = GimbalMode::RELAX;
