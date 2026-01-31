@@ -64,6 +64,7 @@ depends: []
 #include "app_framework.hpp"
 #include "cycle_value.hpp"
 #include "pid.hpp"
+#include "timebase.hpp"
 
 static constexpr float GIMBAL_MAX_SPEED = static_cast<float>(M_2PI) * 1.5f;
 static constexpr float TORQUE_CONSTANT = 0.741f;
@@ -187,7 +188,7 @@ class Gimbal : public LibXR::Application {
     gyro_suber.StartWaiting();
 
     while (true) {
-
+      auto last_time = LibXR::Timebase::GetMilliseconds();
       gimbal->mutex_.Lock();
       if (cmd_suber.Available()) {
         gimbal->cmd_data_ = cmd_suber.GetData();
@@ -206,7 +207,7 @@ class Gimbal : public LibXR::Application {
       gimbal->SetpointFromCMD();
       gimbal->mutex_.Unlock();
       gimbal->OutputToDynamics();
-      gimbal->thread_.Sleep(2);
+      gimbal->thread_.SleepUntil(last_time,2);
     }
   }
 
