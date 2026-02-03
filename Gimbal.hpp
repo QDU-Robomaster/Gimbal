@@ -184,10 +184,6 @@ class Gimbal : public LibXR::Application {
     this->dt_ = (now - this->last_online_time_).ToSecondf();
     this->last_online_time_ = now;
 
-    /*神秘dt_实现*/
-    if (dt_ < 0.001 or dt_ > 0.003) {
-      dt_ = 0.002f;
-    }
 
     abs_angle_pit_ = motor_pit_feedback_.abs_angle - pit_zero_;
     abs_angle_yaw_ = motor_yaw_feedback_.abs_angle - yaw_zero_;
