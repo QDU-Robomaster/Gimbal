@@ -269,6 +269,7 @@ class Gimbal : public LibXR::Application {
   void PitchLimit(float &target_pit, float now_eulr_angle,
                     float now_motor_angle, float motor_max, float motor_min,
                     float sign) {
+    if ((motor_max == 0.0f) && (motor_min == 0.0f)) {return;};
     float pitch_bound_0 = now_eulr_angle + (motor_min - now_motor_angle) / sign;
     float pitch_bound_1 = now_eulr_angle + (motor_max - now_motor_angle) / sign;
 
