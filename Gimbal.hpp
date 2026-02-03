@@ -83,10 +83,19 @@ class Gimbal : public LibXR::Application {
    * @param app 应用管理器
    * @param cmd 命令模块实例
    * @param task_stack_depth 任务堆栈深度
-   * @param pid_yaw_angle_param   Yaw轴角度环PID参数
-   * @param pid_pit_angle_param Pitch轴角度环PID参数
-   * @param pid_yaw_omega_param   Yaw轴角速度环PID参数
-   * @param pid_pit_omega_param Pitch轴角速度环PID参数
+   * @param pid_yaw_angle Yaw轴角度环PID参数
+   * @param pid_yaw_omega Yaw轴角速度环PID参数
+   * @param pid_pit_angle Pitch轴角度环PID参数
+   * @param pid_pit_omega Pitch轴角速度环PID参数
+   * @param motor_pit Pitch轴电机指针
+   * @param motor_yaw Yaw轴电机指针
+   * @param pit_max_angle Pitch轴最大角度
+   * @param pit_min_angle Pitch轴最小角度
+   * @param j_pit Pitch轴转动惯量
+   * @param j_yaw Yaw轴转动惯量
+   * @param pit_zero Pitch轴零点
+   * @param yaw_zero Yaw轴零点
+   * @param reverse_flag Pitch轴反转标志
    */
   Gimbal(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app, CMD &cmd,
          uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
@@ -146,6 +155,11 @@ class Gimbal : public LibXR::Application {
                            callback);
   };
 
+  /**
+   * @brief 线程函数
+   *
+   * @param gimbal Gimbal实例指针
+   */
   static void ThreadFunc(Gimbal *gimbal) {
     LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
@@ -177,6 +191,9 @@ class Gimbal : public LibXR::Application {
     }
   };
 
+  /**
+   * @brief 更新电机反馈及状态
+   */
   void Update() {
     motor_yaw_->Update();
     motor_pit_->Update();
@@ -194,6 +211,9 @@ class Gimbal : public LibXR::Application {
     topic_pit_angle_.Publish(abs_angle_pit_);
   }
 
+  /**
+   * @brief 解析云台控制命令
+   */
   void ParseCMD() {
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       target_yaw_cmd_ += cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
@@ -209,6 +229,9 @@ class Gimbal : public LibXR::Application {
     }
   }
 
+  /**
+   * @brief 云台控制计算与输出
+   */
   void Control() {
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
@@ -243,7 +266,7 @@ class Gimbal : public LibXR::Application {
 
   void OnMonitor() override {}
 
-  LibXR::Event &GetEvent() { return gimbal_event_;}
+  LibXR::Event &GetEvent() { return gimbal_event_; }
 
  private:
   CMD &cmd_;
@@ -290,7 +313,16 @@ class Gimbal : public LibXR::Application {
   LibXR::Thread thread_;
 
   /*----------工具函数--------------------------------*/
-
+  /**
+   * @brief Pitch轴角度限位
+   *
+   * @param target_pit 目标Pitch角度
+   * @param now_eulr_angle 当前Pitch欧拉角
+   * @param now_motor_angle 当前Pitch电机角度
+   * @param motor_max 电机最大角度
+   * @param motor_min 电机最小角度
+   * @param sign 方向符号
+   */
   void PitchLimit(LibXR::CycleValue<float> &target_pit, float now_eulr_angle,
                   float now_motor_angle, float motor_max, float motor_min,
                   float sign) {
@@ -305,7 +337,15 @@ class Gimbal : public LibXR::Application {
     target_pit =
         std::clamp(static_cast<float>(target_pit), lower_bound, upper_bound);
   }
-
+  /**
+   * @brief 解算PID控制输出
+   *
+   * @param pit_output Pitch轴输出引用
+   * @param yaw_output Yaw轴输出引用
+   * @param target_pit_angle 目标Pitch角度
+   * @param target_yaw_angle 目标Yaw角度
+   * @param dt_ 时间间隔
+   */
   void Solve(float &pit_output, float &yaw_output,
              const LibXR::CycleValue<float> &target_pit_angle,
              const LibXR::CycleValue<float> &target_yaw_angle, float dt_) {
@@ -316,7 +356,6 @@ class Gimbal : public LibXR::Application {
         pid_pit_omega_.Calculate(target_pit_omega, gyro_data_.y(), dt_);
     pit_output = ff_pit + fb_pit;
     last_pit_omega_ = target_pit_omega;
-
     float yaw_error = target_yaw_angle - euler_.Yaw();
     float target_yaw_omega = pid_pit_angle_.Calculate(yaw_error, 0.0f, dt_);
     float ff_yaw = JFeedforward(target_yaw_omega, last_yaw_omega_, dt_, j_yaw_);
@@ -325,7 +364,15 @@ class Gimbal : public LibXR::Application {
     yaw_output = ff_yaw + fb_yaw;
     last_yaw_omega_ = target_yaw_omega;
   }
-
+  /**
+   * @brief 转动惯量前馈计算
+   *
+   * @param target_omega 目标角速度
+   * @param last_omega 上一次角速度
+   * @param dt_ 时间间隔
+   * @param J 转动惯量
+   * @return float 前馈值
+   */
   static float JFeedforward(float target_omega, float last_omega, float dt_,
                             float J) {
     float feedforward = 0.0f;
@@ -334,6 +381,11 @@ class Gimbal : public LibXR::Application {
     return feedforward;
   }
 
+  /**
+   * @brief 设置云台模式
+   *
+   * @param gimbal_event 云台事件类型
+   */
   void SetMode(GimbalEvent gimbal_event) {
     if (gimbal_event == current_mode_) {
       return;
