@@ -162,7 +162,7 @@ class Gimbal : public LibXR::Application {
       }
 
       gimbal->Update();
-      gimbal->PraseCMD();
+      gimbal->ParseCMD();
       gimbal->Control();
       LibXR::Thread::SleepUntil(last_time, 2);
     }
@@ -183,7 +183,7 @@ class Gimbal : public LibXR::Application {
     topic_pit_angle_.Publish(pit_angle);
   }
 
-  void PraseCMD() {
+  void ParseCMD() {
     if (current_mode_ != GimbalEvent::SET_MODE_COMMON) {return;};
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       target_yaw_cmd_ += cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
