@@ -152,8 +152,11 @@ class Gimbal : public LibXR::Application {
         "ahrs_euler");
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
         "bmi088_gyro");
-    auto last_time = LibXR::Timebase::GetMilliseconds();
+    cmd_suber.StartWaiting();
+    euler_suber.StartWaiting();
+    gyro_suber.StartWaiting();
     while (true) {
+      auto last_time = LibXR::Timebase::GetMilliseconds();
       if (cmd_suber.Available()) {
         gimbal->cmd_data_ = cmd_suber.GetData();
         cmd_suber.StartWaiting();
@@ -184,7 +187,6 @@ class Gimbal : public LibXR::Application {
     this->dt_ = (now - this->last_online_time_).ToSecondf();
     this->last_online_time_ = now;
 
-
     abs_angle_pit_ = motor_pit_feedback_.abs_angle - pit_zero_;
     abs_angle_yaw_ = motor_yaw_feedback_.abs_angle - yaw_zero_;
 
@@ -193,9 +195,6 @@ class Gimbal : public LibXR::Application {
   }
 
   void ParseCMD() {
-    if (current_mode_ != GimbalEvent::SET_MODE_COMMON) {
-      return;
-    };
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       target_yaw_cmd_ += cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
       target_pit_cmd_ += cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
@@ -213,8 +212,8 @@ class Gimbal : public LibXR::Application {
   void Control() {
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
-    PitchLimit(target_pit_cmd_, euler_.Pitch(), abs_angle_pit_,
-               pit_max_angle_, pit_min_angle_, reverse_flag_);
+    PitchLimit(target_pit_cmd_, euler_.Pitch(), abs_angle_pit_, pit_max_angle_,
+               pit_min_angle_, reverse_flag_);
     Solve(out_pit, out_yaw, target_pit_cmd_, target_yaw_cmd_, dt_);
     auto yaw_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_yaw});
@@ -228,7 +227,7 @@ class Gimbal : public LibXR::Application {
     }
 
     auto motor_control = [&](Motor *motor, const Motor::Feedback &fb,
-                              const Motor::MotorCmd &cmd) {
+                             const Motor::MotorCmd &cmd) {
       if (fb.state == 0) {
         motor->Enable();
       } else if (fb.state != 0 and fb.state != 1) {
@@ -243,6 +242,8 @@ class Gimbal : public LibXR::Application {
   }
 
   void OnMonitor() override {}
+
+  LibXR::Event &GetEvent() { return gimbal_event_;}
 
  private:
   CMD &cmd_;
