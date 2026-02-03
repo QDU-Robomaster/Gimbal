@@ -203,7 +203,7 @@ class Gimbal : public LibXR::Application {
   void Control() {
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
-    DynamicLimit(target_pit_cmd_, euler_.Pitch(),
+    PitchLimit(target_pit_cmd_, euler_.Pitch(),
                  motor_pit_feedback_.abs_angle, pit_max_angle_, pit_min_angle_,
                  reverse_flag_);
     Solve(out_pit, out_yaw, target_pit_cmd_, target_yaw_cmd_, dt_);
