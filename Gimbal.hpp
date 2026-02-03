@@ -44,6 +44,8 @@ constructor_args:
   - pit_min_angle: 0.0
   - j_pit: 0.0
   - j_yaw: 0.0
+  - pit_zero: 0.0
+  - yaw_zero: 0.0
   - pit_reverse_flag: false
 template_args: []
 required_hardware: []
