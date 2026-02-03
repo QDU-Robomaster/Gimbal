@@ -266,7 +266,7 @@ class Gimbal : public LibXR::Application {
 
   /*----------工具函数--------------------------------*/
 
-  void DynamicLimit(float &target_pit, float now_eulr_angle,
+  void PitchLimit(float &target_pit, float now_eulr_angle,
                     float now_motor_angle, float motor_max, float motor_min,
                     float sign) {
     float pitch_bound_0 = now_eulr_angle + (motor_min - now_motor_angle) / sign;
