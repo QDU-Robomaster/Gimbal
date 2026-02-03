@@ -306,18 +306,19 @@ class Gimbal : public LibXR::Application {
         std::clamp(static_cast<float>(target_pit), lower_bound, upper_bound);
   }
 
-  void Solve(float &pit_output, float &yaw_output, float target_pit_angle,
-             float target_yaw_angle, float dt_) {
-    float target_pit_omega =
-        pid_pit_angle_.Calculate(target_pit_angle, euler_.Pitch(), dt_);
+  void Solve(float &pit_output, float &yaw_output,
+             const LibXR::CycleValue<float> &target_pit_angle,
+             const LibXR::CycleValue<float> &target_yaw_angle, float dt_) {
+    float pit_error = target_pit_angle - euler_.Pitch();
+    float target_pit_omega = pid_pit_angle_.Calculate(pit_error, 0.0f, dt_);
     float ff_pit = JFeedforward(target_pit_omega, last_pit_omega_, dt_, j_pit_);
     float fb_pit =
         pid_pit_omega_.Calculate(target_pit_omega, gyro_data_.y(), dt_);
     pit_output = ff_pit + fb_pit;
     last_pit_omega_ = target_pit_omega;
 
-    float target_yaw_omega =
-        pid_yaw_angle_.Calculate(target_yaw_angle, euler_.Yaw(), dt_);
+    float yaw_error = target_yaw_angle - euler_.Yaw();
+    float target_yaw_omega = pid_pit_angle_.Calculate(yaw_error, 0.0f, dt_);
     float ff_yaw = JFeedforward(target_yaw_omega, last_yaw_omega_, dt_, j_yaw_);
     float fb_yaw =
         pid_yaw_omega_.Calculate(target_yaw_omega, gyro_data_.z(), dt_);
