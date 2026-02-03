@@ -162,6 +162,7 @@ class Gimbal : public LibXR::Application {
       }
 
       gimbal->Update();
+      gimbal->PraseCMD();
       gimbal->Control();
       LibXR::Thread::SleepUntil(last_time, 2);
     }
@@ -211,12 +212,19 @@ class Gimbal : public LibXR::Application {
                                          .torque = out_yaw});
     auto pit_motor_cmd = Motor::MotorCmd({.mode = Motor::ControlMode::MODE_TORQUE,
                                          .torque = out_pit});
+
     if (current_mode_ == GimbalEvent::SET_MODE_RELAX) {
+      motor_yaw_->Disable();
+      motor_pit_->Disable();
       motor_yaw_->Relax();
       motor_pit_->Relax();
       return;
     }
 
+    if(motor_pit_feedback_.state == 0 or motor_yaw_feedback_.state == 0){
+      motor_pit_->Enable();
+      motor_yaw_->Enable();
+    }
     motor_yaw_->Control(yaw_motor_cmd);
     motor_pit_->Control(pit_motor_cmd);
   }
