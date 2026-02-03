@@ -337,6 +337,7 @@ class Gimbal : public LibXR::Application {
     target_pit =
         std::clamp(static_cast<float>(target_pit), lower_bound, upper_bound);
   }
+
   /**
    * @brief 解算PID控制输出
    *
@@ -364,6 +365,7 @@ class Gimbal : public LibXR::Application {
     yaw_output = ff_yaw + fb_yaw;
     last_yaw_omega_ = target_yaw_omega;
   }
+  
   /**
    * @brief 转动惯量前馈计算
    *
