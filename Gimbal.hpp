@@ -110,8 +110,6 @@ class Gimbal : public LibXR::Application {
         reverse_flag_(reverse_flag ? -1.0f : 1.0f) {
     UNUSED(hw);
     UNUSED(app);
-    UNUSED(pit_zero_);
-    UNUSED(yaw_zero_);
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
                    LibXR::Thread::Priority::MEDIUM);
