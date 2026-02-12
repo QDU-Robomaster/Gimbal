@@ -118,7 +118,7 @@ class Gimbal : public LibXR::Application {
         j_yaw_(j_yaw),
         pit_zero_(pit_zero),
         yaw_zero_(yaw_zero),
-        reverse_flag_(reverse_flag ? -1.0f : 1.0f) {
+        reverse_flag_(reverse_flag ? 1.0f : -1.0f) {
     UNUSED(hw);
     UNUSED(app);
 
@@ -169,6 +169,9 @@ class Gimbal : public LibXR::Application {
     cmd_suber.StartWaiting();
     euler_suber.StartWaiting();
     gyro_suber.StartWaiting();
+
+    gimbal->last_online_time_ = LibXR::Timebase::GetMicroseconds();
+
     while (true) {
       auto last_time = LibXR::Timebase::GetMilliseconds();
       if (cmd_suber.Available()) {
@@ -177,10 +180,12 @@ class Gimbal : public LibXR::Application {
       }
       if (euler_suber.Available()) {
         gimbal->euler_ = euler_suber.GetData();
+        gimbal->euler_.Pitch() *= -1.0f;
         euler_suber.StartWaiting();
       }
       if (gyro_suber.Available()) {
         gimbal->gyro_data_ = gyro_suber.GetData();
+        gimbal->gyro_data_.y() *= -1.0f;
         gyro_suber.StartWaiting();
       }
 
@@ -233,21 +238,21 @@ class Gimbal : public LibXR::Application {
    * @brief 云台控制计算与输出
    */
   void Control() {
+    if (current_mode_ == GimbalEvent::SET_MODE_RELAX) {
+      motor_yaw_->Relax();
+      motor_pit_->Relax();
+      return;
+    }
+
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
-    PitchLimit(target_pit_cmd_, euler_.Pitch(), abs_angle_pit_, pit_max_angle_,
+    PitchLimit(target_pit_cmd_, euler_.Pitch(), motor_pit_feedback_.abs_angle, pit_max_angle_,
                pit_min_angle_, reverse_flag_);
     Solve(out_pit, out_yaw, target_pit_cmd_, target_yaw_cmd_, dt_);
     auto yaw_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_yaw});
     auto pit_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_pit});
-
-    if (current_mode_ == GimbalEvent::SET_MODE_RELAX) {
-      motor_yaw_->Relax();
-      motor_pit_->Relax();
-      return;
-    }
 
     auto motor_control = [&](Motor *motor, const Motor::Feedback &fb,
                              const Motor::MotorCmd &cmd) {
@@ -358,14 +363,14 @@ class Gimbal : public LibXR::Application {
     pit_output = ff_pit + fb_pit;
     last_pit_omega_ = target_pit_omega;
     float yaw_error = target_yaw_angle - euler_.Yaw();
-    float target_yaw_omega = pid_pit_angle_.Calculate(yaw_error, 0.0f, dt_);
+    float target_yaw_omega = pid_yaw_angle_.Calculate(yaw_error, 0.0f, dt_);
     float ff_yaw = JFeedforward(target_yaw_omega, last_yaw_omega_, dt_, j_yaw_);
     float fb_yaw =
         pid_yaw_omega_.Calculate(target_yaw_omega, gyro_data_.z(), dt_);
     yaw_output = ff_yaw + fb_yaw;
     last_yaw_omega_ = target_yaw_omega;
   }
-  
+
   /**
    * @brief 转动惯量前馈计算
    *
