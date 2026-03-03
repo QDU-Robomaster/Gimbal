@@ -333,7 +333,7 @@ class Gimbal : public LibXR::Application {
   float j_yaw_ = 0.0f;
   LibXR::CycleValue<float> pit_zero_ = 0.0f;
   LibXR::CycleValue<float> yaw_zero_ = 0.0f;
-  LibXR::CycleValue<float> target_pit_cmd_ = 0.0f;
+  float target_pit_cmd_ = 0.0f;
   LibXR::CycleValue<float> target_yaw_cmd_ = 0.0f;
   float abs_angle_yaw_ = 0.0f;
   float abs_angle_pit_ = 0.0f;
@@ -361,7 +361,7 @@ class Gimbal : public LibXR::Application {
    * @param motor_min 电机最小角度
    * @param sign 方向符号
    */
-  void PitchLimit(LibXR::CycleValue<float>& target_pit, float now_eulr_angle,
+  void PitchLimit(float& target_pit, float now_eulr_angle,
                   float now_motor_angle, float motor_max, float motor_min,
                   float sign) {
     if ((motor_max == 0.0f) && (motor_min == 0.0f)) {
@@ -372,8 +372,7 @@ class Gimbal : public LibXR::Application {
 
     float upper_bound = std::max(pitch_bound_0, pitch_bound_1);
     float lower_bound = std::min(pitch_bound_0, pitch_bound_1);
-    target_pit =
-        std::clamp(static_cast<float>(target_pit), lower_bound, upper_bound);
+    target_pit = std::clamp(target_pit, lower_bound, upper_bound);
   }
 
   /**
@@ -385,8 +384,7 @@ class Gimbal : public LibXR::Application {
    * @param target_yaw_angle 目标Yaw角度
    * @param dt_ 时间间隔
    */
-  void Solve(float& pit_output, float& yaw_output,
-             const LibXR::CycleValue<float>& target_pit_angle,
+  void Solve(float& pit_output, float& yaw_output, float target_pit_angle,
              const LibXR::CycleValue<float>& target_yaw_angle, float dt_) {
     float pit_error = target_pit_angle - euler_.Pitch();
     float target_pit_omega = pid_pit_angle_.Calculate(pit_error, 0.0f, dt_);
@@ -410,7 +408,7 @@ class Gimbal : public LibXR::Application {
    * @param target_omega 目标角速度
    * @param last_omega 上一次角速度
    * @param dt_ 时间间隔
-   * @param J 转动惯量
+   * @param J 转动惯量 kg*m^2
    * @return float 前馈值
    */
   static float JFeedforward(float target_omega, float last_omega, float dt_,
