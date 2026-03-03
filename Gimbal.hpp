@@ -367,8 +367,8 @@ class Gimbal : public LibXR::Application {
     if ((motor_max == 0.0f) && (motor_min == 0.0f)) {
       return;
     };
-    float pitch_bound_0 = now_eulr_angle + (motor_min - now_motor_angle) / sign;
-    float pitch_bound_1 = now_eulr_angle + (motor_max - now_motor_angle) / sign;
+    LibXR::CycleValue<float> pitch_bound_0 = now_eulr_angle + (motor_min - now_motor_angle) / sign;
+    LibXR::CycleValue<float> pitch_bound_1 = now_eulr_angle + (motor_max - now_motor_angle) / sign;
 
     float upper_bound = std::max(pitch_bound_0, pitch_bound_1);
     float lower_bound = std::min(pitch_bound_0, pitch_bound_1);
