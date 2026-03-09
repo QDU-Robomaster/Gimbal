@@ -141,7 +141,7 @@ class Gimbal : public LibXR::Application {
 #endif
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
-                   LibXR::Thread::Priority::MEDIUM);
+                   LibXR::Thread::Priority::HIGH);
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Gimbal* gimbal, uint32_t event_id) {
           UNUSED(in_isr);
@@ -179,7 +179,8 @@ class Gimbal : public LibXR::Application {
    * @param gimbal Gimbal实例指针
    */
   static void ThreadFunc(Gimbal* gimbal) {
-    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
+    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber(
+        gimbal->cmd_.GetGimbalTopic());
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
         "ahrs_euler");
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
@@ -370,7 +371,7 @@ class Gimbal : public LibXR::Application {
 
     LibXR::CycleValue<float> cycle_motor_min(motor_min);
     LibXR::CycleValue<float> cycle_motor_max(motor_max);
-    
+
     float diff_min = cycle_motor_min - now_motor_angle;
     float diff_max = cycle_motor_max - now_motor_angle;
     float pitch_bound_0 = now_eulr_angle + diff_min / sign;
