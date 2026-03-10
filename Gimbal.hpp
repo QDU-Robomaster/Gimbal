@@ -179,8 +179,7 @@ class Gimbal : public LibXR::Application {
    * @param gimbal Gimbal实例指针
    */
   static void ThreadFunc(Gimbal* gimbal) {
-    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber(
-        gimbal->cmd_.GetGimbalTopic());
+    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
         "ahrs_euler");
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
@@ -190,9 +189,9 @@ class Gimbal : public LibXR::Application {
     gyro_suber.StartWaiting();
 
     gimbal->last_online_time_ = LibXR::Timebase::GetMicroseconds();
+    auto last_time = LibXR::Timebase::GetMilliseconds();
 
     while (true) {
-      auto last_time = LibXR::Timebase::GetMilliseconds();
       if (cmd_suber.Available()) {
         gimbal->cmd_data_ = cmd_suber.GetData();
         cmd_suber.StartWaiting();
