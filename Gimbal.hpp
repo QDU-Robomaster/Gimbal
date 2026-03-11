@@ -47,6 +47,7 @@ constructor_args:
   - pit_zero: 0.0
   - yaw_zero: 0.0
   - pit_reverse_flag: false
+  - thread_priority: LibXR::Thread::Priority::HIGH
 template_args: []
 required_hardware: []
 depends:
@@ -105,14 +106,15 @@ class Gimbal : public LibXR::Application {
    * @param yaw_zero Yaw轴零点
    * @param reverse_flag Pitch轴反转标志
    */
-  Gimbal(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-         uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
-         LibXR::PID<float>::Param pid_yaw_omega,
-         LibXR::PID<float>::Param pid_pit_angle,
-         LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit,
-         Motor* motor_yaw, float pit_max_angle, float pit_min_angle,
-         float j_pit, float j_yaw, float pit_zero, float yaw_zero,
-         bool reverse_flag)
+  Gimbal(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
+      uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
+      LibXR::PID<float>::Param pid_yaw_omega,
+      LibXR::PID<float>::Param pid_pit_angle,
+      LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit,
+      Motor* motor_yaw, float pit_max_angle, float pit_min_angle, float j_pit,
+      float j_yaw, float pit_zero, float yaw_zero, bool reverse_flag,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
       : cmd_(cmd),
         pid_yaw_angle_(pid_yaw_angle),
         pid_yaw_omega_(pid_yaw_omega),
@@ -141,7 +143,7 @@ class Gimbal : public LibXR::Application {
 #endif
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
-                   LibXR::Thread::Priority::HIGH);
+                   thread_priority);
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Gimbal* gimbal, uint32_t event_id) {
           UNUSED(in_isr);
