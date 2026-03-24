@@ -66,7 +66,6 @@ depends:
 #include "Motor.hpp"
 #include "app_framework.hpp"
 #include "cycle_value.hpp"
-#include "dsp/fast_math_functions.h"
 #include "event.hpp"
 #include "libxr_def.hpp"
 #include "libxr_time.hpp"
