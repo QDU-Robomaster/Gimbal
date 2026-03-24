@@ -38,14 +38,6 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-    - pid_yaw_patrol:
-      k: 0.0
-      p: 0.0
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 0.0
-      cycle: false
   - motor_pitch: '@&motor_pit'
   - motor_yaw: '@&motor_yaw'
   - pit_max_angle: 0.0
@@ -56,7 +48,6 @@ constructor_args:
   - yaw_zero: 0.0
   - patrol_range: 0.0
   - patrol_omega: 0.0
-  - patrol_v: 0.0
   - pit_reverse_flag: false
   - thread_priority: LibXR::Thread::Priority::HIGH
 template_args: []
