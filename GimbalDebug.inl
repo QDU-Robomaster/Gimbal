@@ -64,6 +64,10 @@ inline int Gimbal::DebugCommand(int argc, char** argv) {
               case GimbalEvent::SET_MODE_COMMON:
                 text = "COMMON";
                 break;
+                            case GimbalEvent::SET_MODE_AUTOPATROL:
+                text = "AUTOPATROL";
+                break;
+
             }
             LibXR::STDIO::Printf("  %s=%s\r\n", field_name, text);
           }),
