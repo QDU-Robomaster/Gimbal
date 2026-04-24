@@ -79,7 +79,8 @@ depends:
 #include "ramfs.hpp"
 #endif
 
-static constexpr float GIMBAL_MAX_SPEED = static_cast<float>(M_2PI) * 1.50f;
+static constexpr float GIMBAL_MAX_SPEED =
+    static_cast<float>(LibXR::TWO_PI) * 1.50f;
 enum class GimbalEvent : uint8_t {
   SET_MODE_RELAX,
   SET_MODE_COMMON,
