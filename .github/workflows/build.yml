@@ -31,7 +31,7 @@ jobs:
 
           int main() {
               LibXR::PlatformInit();
-              LibXR::STDIO::Printf("This is XRobot Module Template Test\n");
+              LibXR::STDIO::Printf<"This is XRobot Module Template Test\n">();
               LibXR::HardwareContainer hw;
               XRobotMain(hw);
               return 0;
@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: QDU-Robomaster/RMMotor
-          ref: dev
+          ref: master
           path: Modules/RMMotor
 
       - name: Checkout DMMotor module
@@ -82,19 +82,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xrobot-org/BMI088
+          ref: master
           path: Modules/BMI088
 
       - name: Checkout MadgwickAHRS module
         uses: actions/checkout@v4
         with:
           repository: xrobot-org/MadgwickAHRS
+          ref: master
           path: Modules/MadgwickAHRS
-
-      - name: Checkout DebugCore module
-        uses: actions/checkout@v4
-        with:
-          repository: QDU-Robomaster/DebugCore
-          path: Modules/DebugCore
 
       - name: Setup Python & Install deps
         run: |
