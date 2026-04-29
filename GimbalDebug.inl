@@ -31,9 +31,8 @@ inline int Gimbal::DebugCommand(int argc, char** argv) {
       Gimbal, (name), (mask),                                             \
       +[](const char* field_name, const Gimbal* self) {                   \
         const auto& pid = (self->member);                                 \
-        LibXR::STDIO::Printf(                                             \
-            "  %s: k=%.4f p=%.4f i=%.4f d=%.4f i_lim=%.4f out_lim=%.4f "  \
-            "err=%.4f i_err=%.4f der=%.4f out=%.4f\r\n",                  \
+        LibXR::STDIO::Printf<"  %s: k=%.4f p=%.4f i=%.4f d=%.4f i_lim=%.4f out_lim=%.4f "  \
+            "err=%.4f i_err=%.4f der=%.4f out=%.4f\r\n">(\
             field_name, pid.K(), pid.P(), pid.I(), pid.D(), pid.ILimit(), \
             pid.OutLimit(), pid.LastError(), pid.GetIntegralError(),      \
             pid.LastDerivative(), pid.LastOutput());                      \
@@ -44,9 +43,8 @@ inline int Gimbal::DebugCommand(int argc, char** argv) {
       Gimbal, (name), (mask),                                            \
       +[](const char* field_name, const Gimbal* self) {                  \
         const auto& fb = (self->member);                                 \
-        LibXR::STDIO::Printf(                                            \
-            "  %s: state=%u abs=%.4f rad vel=%.0f rpm omega=%.4f rad/s " \
-            "torque=%.4f temp=%.0f C\r\n",                               \
+        LibXR::STDIO::Printf<"  %s: state=%u abs=%.4f rad vel=%.0f rpm omega=%.4f rad/s " \
+            "torque=%.4f temp=%.0f C\r\n">(\
             field_name, static_cast<unsigned>(fb.state),                 \
             static_cast<float>(fb.abs_angle), fb.velocity, fb.omega,     \
             fb.torque, fb.temp);                                         \
@@ -69,7 +67,7 @@ inline int Gimbal::DebugCommand(int argc, char** argv) {
                 break;
 
             }
-            LibXR::STDIO::Printf("  %s=%s\r\n", field_name, text);
+            LibXR::STDIO::Printf<"  %s=%s\r\n">(field_name, text);
           }),
       DEBUG_CORE_LIVE_F32(Gimbal, "dt_s", mask_state, self->dt_),
       DEBUG_CORE_LIVE_F32(Gimbal, "yaw_rad", mask_state, self->euler_.Yaw()),
@@ -94,7 +92,7 @@ inline int Gimbal::DebugCommand(int argc, char** argv) {
                 text = "CMD_AUTO_CTRL";
                 break;
             }
-            LibXR::STDIO::Printf("  %s=%s\r\n", field_name, text);
+            LibXR::STDIO::Printf<"  %s=%s\r\n">(field_name, text);
           }),
       DEBUG_CORE_LIVE_BOOL(Gimbal, "ai_gimbal", mask_cmd,
                            self->cmd_.GetAIGimbalStatus()),
