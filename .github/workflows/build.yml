@@ -92,12 +92,6 @@ jobs:
           ref: master
           path: Modules/MadgwickAHRS
 
-      - name: Checkout DebugCore module
-        uses: actions/checkout@v4
-        with:
-          repository: QDU-Robomaster/DebugCore
-          path: Modules/DebugCore
-
       - name: Setup Python & Install deps
         run: |
           python3 -m pip install --upgrade pip

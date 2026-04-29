@@ -74,11 +74,6 @@ depends:
 #include "timebase.hpp"
 #include "transform.hpp"
 
-#ifdef DEBUG
-#include "DebugCore.hpp"
-#include "ramfs.hpp"
-#endif
-
 static constexpr float GIMBAL_MAX_SPEED =
     static_cast<float>(LibXR::TWO_PI) * 1.50f;
 enum class GimbalEvent : uint8_t {
@@ -135,19 +130,8 @@ class Gimbal : public LibXR::Application {
         yaw_zero_(yaw_zero),
         patrol_range_(patrol_range),
         patrol_omega_(patrol_omega),
-        reverse_flag_(reverse_flag ? 1.0f : -1.0f)
-#ifdef DEBUG
-        ,
-        cmd_file_(LibXR::RamFS::CreateFile(
-            "gimbal", debug_core::command_thunk<Gimbal, &Gimbal::DebugCommand>,
-            this))
-#endif
-  {
+        reverse_flag_(reverse_flag ? 1.0f : -1.0f) {
     UNUSED(app);
-
-#ifdef DEBUG
-    hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
-#endif
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
                    thread_priority);
@@ -312,17 +296,6 @@ class Gimbal : public LibXR::Application {
 
   LibXR::Event& GetEvent() { return gimbal_event_; }
 
-  /**
-   * @brief 调试命令入口
-   * @param argc 命令参数个数
-   * @param argv 命令参数数组
-   * @return int 命令执行结果，0表示成功，负值表示失败
-   * @details 支持 state/cmd/pid/motor/full 视图以及 once/monitor 调试模式。
-   */
-#ifdef DEBUG
-  int DebugCommand(int argc, char** argv);
-#endif
-
  private:
   CMD& cmd_;
   LibXR::PID<float> pid_yaw_angle_;
@@ -367,10 +340,6 @@ class Gimbal : public LibXR::Application {
   LibXR::MicrosecondTimestamp last_online_time_;
 
   LibXR::Thread thread_;
-
-#ifdef DEBUG
-  LibXR::RamFS::File cmd_file_;
-#endif
 
   /*----------工具函数--------------------------------*/
   /**
@@ -497,15 +466,3 @@ class Gimbal : public LibXR::Application {
     }
   }
 };
-
-#ifdef DEBUG
-#define GIMBAL_DEBUG_IMPL
-#include "GimbalDebug.inl"
-#undef GIMBAL_DEBUG_IMPL
-#endif
-
-#ifdef DEBUG
-#define GIMBAL_DEBUG_IMPL
-#include "GimbalDebug.inl"
-#undef GIMBAL_DEBUG_IMPL
-#endif
