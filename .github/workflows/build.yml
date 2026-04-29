@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: QDU-Robomaster/RMMotor
-          ref: dev
+          ref: master
           path: Modules/RMMotor
 
       - name: Checkout DMMotor module
@@ -82,12 +82,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xrobot-org/BMI088
+          ref: master
           path: Modules/BMI088
 
       - name: Checkout MadgwickAHRS module
         uses: actions/checkout@v4
         with:
           repository: xrobot-org/MadgwickAHRS
+          ref: master
           path: Modules/MadgwickAHRS
 
       - name: Checkout DebugCore module
