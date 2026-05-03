@@ -16,6 +16,11 @@
 2. 配置零位、限位、惯量与 PID 参数。
 3. 先验证模式切换，再联调控制参数。
 
+云台姿态输入 topic：
+- `gimbal_cmd`：CMD 发布的云台控制命令。
+- `gimbal_euler`：云台 IMU 融合后的欧拉角。
+- `gimbal_gyro`：云台 IMU 原始角速度。
+
 标准命令流程：
     xrobot_add_mod Gimbal --instance-id gimbal
     xrobot_gen_main
