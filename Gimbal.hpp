@@ -176,9 +176,9 @@ class Gimbal : public LibXR::Application {
   static void ThreadFunc(Gimbal* gimbal) {
     LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
-        "ahrs_euler");
+        "gimbal_euler");
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
-        "bmi088_gyro");
+        "gimbal_gyro");
     cmd_suber.StartWaiting();
     euler_suber.StartWaiting();
     gyro_suber.StartWaiting();
