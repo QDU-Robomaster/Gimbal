@@ -21,6 +21,7 @@
 - `gimbal_euler`：云台 IMU 融合后的欧拉角。
 - `gimbal_gyro`：云台 IMU 原始角速度。
 
+
 标准命令流程：
     xrobot_add_mod Gimbal --instance-id gimbal
     xrobot_gen_main
