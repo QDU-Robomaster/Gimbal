@@ -64,6 +64,7 @@ depends:
 
 #include <cstdlib>
 #include <cstring>
+
 #include "CMD.hpp"
 #include "Motor.hpp"
 #include "app_framework.hpp"
@@ -118,10 +119,9 @@ class Gimbal : public LibXR::Application {
       LibXR::PID<float>::Param pid_yaw_omega,
       LibXR::PID<float>::Param pid_pit_angle,
       LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit,
-      Motor* motor_yaw, float pit_max_angle, float pit_min_angle,float pit_lc,float pit_theta, float yaw_k,
-      float j_pit,
-      float j_yaw, float pit_zero, float yaw_zero, float patrol_range,
-      float patrol_omega, bool reverse_flag,
+      Motor* motor_yaw, float pit_max_angle, float pit_min_angle, float pit_lc,
+      float pit_theta, float yaw_k, float j_pit, float j_yaw, float pit_zero,
+      float yaw_zero, float patrol_range, float patrol_omega, bool reverse_flag,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : cmd_(cmd),
         pid_yaw_angle_(pid_yaw_angle),
@@ -246,10 +246,10 @@ class Gimbal : public LibXR::Application {
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       target_yaw_cmd_ -= cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
       target_pit_cmd_ += cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-        target_pit_dot_ = 0.0f;
-        target_pit_ddot_ = 0.0f;
-        target_yaw_dot_  = 0.0f;
-        target_yaw_ddot_ = 0.0f;
+      target_pit_dot_ = 0.0f;
+      target_pit_ddot_ = 0.0f;
+      target_yaw_dot_ = 0.0f;
+      target_yaw_ddot_ = 0.0f;
 
     } else {
       if (cmd_.GetAIGimbalStatus()) {
@@ -257,12 +257,12 @@ class Gimbal : public LibXR::Application {
         target_pit_cmd_ = cmd_data_.pit;
         target_pit_dot_ = cmd_data_.pit_dot;
         target_pit_ddot_ = cmd_data_.pit_ddot;
-        target_yaw_dot_  = cmd_data_.yaw_dot;
+        target_yaw_dot_ = cmd_data_.yaw_dot;
         target_yaw_ddot_ = cmd_data_.yaw_ddot;
       } else {
         if (current_mode_ == GimbalEvent::SET_MODE_AUTOPATROL) {
           target_pit_cmd_ -=
-              patrol_range_ * (2 / M_PI) *
+              patrol_range_ * (2 / static_cast<float>(M_PI)) *
               asin(sin(patrol_omega_ * (LibXR::Timebase::GetMilliseconds() -
                                         patrol_start_time))) /
               1000.0f;
@@ -272,10 +272,10 @@ class Gimbal : public LibXR::Application {
               cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
           target_pit_cmd_ +=
               cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-        target_pit_dot_ = 0.0f;
-        target_pit_ddot_ = 0.0f;
-        target_yaw_dot_  = 0.0f;
-        target_yaw_ddot_ = 0.0f;
+          target_pit_dot_ = 0.0f;
+          target_pit_ddot_ = 0.0f;
+          target_yaw_dot_ = 0.0f;
+          target_yaw_ddot_ = 0.0f;
         }
       }
     }
@@ -286,7 +286,7 @@ class Gimbal : public LibXR::Application {
    */
   void Control() {
     /*仅用于调试极性()*/
-    this->torque_= -this->pit_lc_*sinf(euler_.Pitch()+this->pit_theta_);
+    this->torque_ = -this->pit_lc_ * sinf(euler_.Pitch() + this->pit_theta_);
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
 
@@ -419,18 +419,26 @@ class Gimbal : public LibXR::Application {
   void Solve(float& pit_output, float& yaw_output, float target_pit_angle,
              const LibXR::CycleValue<float>& target_yaw_angle, float dt_) {
     float pit_error = target_pit_angle - euler_.Pitch();
-    float target_pit_omega = pid_pit_angle_.Calculate(pit_error, 0.0f, dt_)+ target_pit_dot_;
-    float ff_pit = JFeedforward(target_pit_omega, last_pit_omega_, dt_, j_pit_)+j_pit_ * target_pit_ddot_;
-    float gravity_ff_pit = -this->pit_lc_*sinf(euler_.Pitch()+this->pit_theta_);
+    float target_pit_omega =
+        pid_pit_angle_.Calculate(pit_error, 0.0f, dt_) + target_pit_dot_;
+    float ff_pit =
+        JFeedforward(target_pit_omega, last_pit_omega_, dt_, j_pit_) +
+        j_pit_ * target_pit_ddot_;
+    float gravity_ff_pit =
+        -this->pit_lc_ * sinf(euler_.Pitch() + this->pit_theta_);
     float fb_pit =
         pid_pit_omega_.Calculate(target_pit_omega, gyro_data_.y(), dt_);
     pit_output = ff_pit + fb_pit + gravity_ff_pit;
     last_pit_omega_ = target_pit_omega;
     float yaw_error = target_yaw_angle - euler_.Yaw();
-    float target_yaw_omega = pid_yaw_angle_.Calculate(yaw_error, 0.0f, dt_)+ target_yaw_dot_;
-    float ff_yaw = JFeedforward(target_yaw_omega, last_yaw_omega_, dt_, j_yaw_)+ j_yaw_ * target_yaw_ddot_;
-    float fb_yaw = pid_yaw_omega_.Calculate(target_yaw_omega, gyro_data_.z(), dt_);
-    yaw_output = ff_yaw + fb_yaw + motor_yaw_feedback_.omega*this->yaw_k_;
+    float target_yaw_omega =
+        pid_yaw_angle_.Calculate(yaw_error, 0.0f, dt_) + target_yaw_dot_;
+    float ff_yaw =
+        JFeedforward(target_yaw_omega, last_yaw_omega_, dt_, j_yaw_) +
+        j_yaw_ * target_yaw_ddot_;
+    float fb_yaw =
+        pid_yaw_omega_.Calculate(target_yaw_omega, gyro_data_.z(), dt_);
+    yaw_output = ff_yaw + fb_yaw + motor_yaw_feedback_.omega * this->yaw_k_;
     last_yaw_omega_ = target_yaw_omega;
   }
 
@@ -486,10 +494,10 @@ class Gimbal : public LibXR::Application {
         pid_yaw_omega_.Reset();
         last_pit_omega_ = 0.0f;
         last_yaw_omega_ = 0.0f;
-        target_yaw_dot_ =0.0f;
-        target_yaw_ddot_ =0.0f;
-        target_pit_dot_ =0.0f;
-        target_pit_ddot_ =0.0f;
+        target_yaw_dot_ = 0.0f;
+        target_yaw_ddot_ = 0.0f;
+        target_pit_dot_ = 0.0f;
+        target_pit_ddot_ = 0.0f;
         break;
       case GimbalEvent::SET_MODE_AUTOPATROL:
         patrol_start_time = LibXR::Timebase::GetMilliseconds();
@@ -501,10 +509,10 @@ class Gimbal : public LibXR::Application {
         pid_yaw_omega_.Reset();
         last_pit_omega_ = 0.0f;
         last_yaw_omega_ = 0.0f;
-        target_yaw_dot_ =0.0f;
-        target_yaw_ddot_ =0.0f;
-        target_pit_dot_ =0.0f;
-        target_pit_ddot_ =0.0f;
+        target_yaw_dot_ = 0.0f;
+        target_yaw_ddot_ = 0.0f;
+        target_pit_dot_ = 0.0f;
+        target_pit_ddot_ = 0.0f;
         break;
       default:
         break;
