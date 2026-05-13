@@ -22,7 +22,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: true
-  - pid_pit_angle:
+  - pid_roll_angle:
       k: 0.0
       p: 0.0
       i: 0.0
@@ -30,7 +30,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - pid_pit_omega:
+  - pid_roll_omega:
       k: 0.0
       p: 0.0
       i: 0.0
@@ -38,20 +38,20 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_pitch: '@&motor_pit'
+  - motor_roll: '@&motor_roll'
   - motor_yaw: '@&motor_yaw'
-  - pit_max_angle: 0.0
-  - pit_min_angle: 0.0
-  - pit_lc: 0.0
-  - pit_theta: 0.0
+  - roll_max_angle: 0.0
+  - roll_min_angle: 0.0
+  - roll_lc: 0.0
+  - roll_theta: 0.0
   - yaw_k: 0.0
-  - j_pit: 0.0
+  - j_roll: 0.0
   - j_yaw: 0.0
-  - pit_zero: 0.0
+  - roll_zero: 0.0
   - yaw_zero: 0.0
   - patrol_range: 0.0
   - patrol_omega: 0.0
-  - pit_reverse_flag: false
+  - roll_reverse_flag: false
   - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
@@ -98,46 +98,46 @@ class Gimbal : public LibXR::Application {
    * @param task_stack_depth 任务堆栈深度
    * @param pid_yaw_angle Yaw轴角度环PID参数
    * @param pid_yaw_omega Yaw轴角速度环PID参数
-   * @param pid_pit_angle Pitch轴角度环PID参数
-   * @param pid_pit_omega Pitch轴角速度环PID参数
-   * @param motor_pit Pitch轴电机指针
+   * @param pid_roll_angle Roll轴角度环PID参数
+   * @param pid_roll_omega Roll轴角速度环PID参数
+   * @param motor_roll Roll轴电机指针
    * @param motor_yaw Yaw轴电机指针
-   * @param pit_max_angle Pitch轴最大角度
-   * @param pit_min_angle Pitch轴最小角度
-   * @param pit_lc Pitch质心距离(m)(距离水平向上为+)*Pitch质心重力(N)
-   * @param pit_theta Pitch质心与重力轴线夹角(rad 极性自己猜)
+   * @param roll_max_angle Roll轴最大角度
+   * @param roll_min_angle Roll轴最小角度
+   * @param roll_lc Roll轴质心距离(m)(距离水平向上为+)*Roll轴质心重力(N)
+   * @param roll_theta Roll轴质心与重力轴线夹角(rad 极性自己猜)
    * @param yaw_k Yaw轴阻力系数
-   * @param j_pit Pitch轴转动惯量
+   * @param j_roll Roll轴转动惯量
    * @param j_yaw Yaw轴转动惯量
-   * @param pit_zero Pitch轴零点
+   * @param roll_zero Roll轴零点
    * @param yaw_zero Yaw轴零点
-   * @param reverse_flag Pitch轴反转标志
+   * @param reverse_flag Roll轴反转标志
    */
   Gimbal(
       LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
       uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
       LibXR::PID<float>::Param pid_yaw_omega,
-      LibXR::PID<float>::Param pid_pit_angle,
-      LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit,
-      Motor* motor_yaw, float pit_max_angle, float pit_min_angle, float pit_lc,
-      float pit_theta, float yaw_k, float j_pit, float j_yaw, float pit_zero,
+      LibXR::PID<float>::Param pid_roll_angle,
+      LibXR::PID<float>::Param pid_roll_omega, Motor* motor_roll,
+      Motor* motor_yaw, float roll_max_angle, float roll_min_angle, float roll_lc,
+      float roll_theta, float yaw_k, float j_roll, float j_yaw, float roll_zero,
       float yaw_zero, float patrol_range, float patrol_omega, bool reverse_flag,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : cmd_(cmd),
         pid_yaw_angle_(pid_yaw_angle),
         pid_yaw_omega_(pid_yaw_omega),
-        pid_pit_angle_(pid_pit_angle),
-        pid_pit_omega_(pid_pit_omega),
+        pid_roll_angle_(pid_roll_angle),
+        pid_roll_omega_(pid_roll_omega),
         motor_yaw_(motor_yaw),
-        motor_pit_(motor_pit),
-        pit_max_angle_(pit_max_angle),
-        pit_min_angle_(pit_min_angle),
-        pit_lc_(pit_lc),
-        pit_theta_(pit_theta),
+        motor_roll_(motor_roll),
+        roll_max_angle_(roll_max_angle),
+        roll_min_angle_(roll_min_angle),
+        roll_lc_(roll_lc),
+        roll_theta_(roll_theta),
         yaw_k_(yaw_k),
-        j_pit_(j_pit),
+        j_roll_(j_roll),
         j_yaw_(j_yaw),
-        pit_zero_(pit_zero),
+        roll_zero_(roll_zero),
         yaw_zero_(yaw_zero),
         patrol_range_(patrol_range),
         patrol_omega_(patrol_omega),
@@ -222,19 +222,19 @@ class Gimbal : public LibXR::Application {
    */
   void Update() {
     motor_yaw_->Update();
-    motor_pit_->Update();
+    motor_roll_->Update();
     motor_yaw_feedback_ = motor_yaw_->GetFeedback();
-    motor_pit_feedback_ = motor_pit_->GetFeedback();
+    motor_roll_feedback_ = motor_roll_->GetFeedback();
 
     auto now = LibXR::Timebase::GetMicroseconds();
     this->dt_ = (now - this->last_online_time_).ToSecondf();
     this->last_online_time_ = now;
 
-    abs_angle_pit_ = motor_pit_feedback_.abs_angle - pit_zero_;
+    abs_angle_roll_ = motor_roll_feedback_.abs_angle - roll_zero_;
     abs_angle_yaw_ = motor_yaw_feedback_.abs_angle - yaw_zero_;
 
     topic_yaw_angle_.Publish(abs_angle_yaw_);
-    topic_pit_angle_.Publish(abs_angle_pit_);
+    topic_roll_angle_.Publish(abs_angle_roll_);
   }
 
   /**
@@ -243,23 +243,23 @@ class Gimbal : public LibXR::Application {
   void ParseCMD() {
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       target_yaw_cmd_ -= cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-      target_pit_cmd_ += cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-      target_pit_dot_ = 0.0f;
-      target_pit_ddot_ = 0.0f;
+      target_roll_cmd_ += cmd_data_.rol * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+      target_roll_dot_ = 0.0f;
+      target_roll_ddot_ = 0.0f;
       target_yaw_dot_ = 0.0f;
       target_yaw_ddot_ = 0.0f;
 
     } else {
       if (cmd_.GetAIGimbalStatus()) {
         target_yaw_cmd_ = cmd_data_.yaw;
-        target_pit_cmd_ = cmd_data_.rol;
-        target_pit_dot_ = cmd_data_.rol_dot;
-        target_pit_ddot_ = cmd_data_.rol_ddot;
+        target_roll_cmd_ = cmd_data_.rol;
+        target_roll_dot_ = cmd_data_.rol_dot;
+        target_roll_ddot_ = cmd_data_.rol_ddot;
         target_yaw_dot_ = cmd_data_.yaw_dot;
         target_yaw_ddot_ = cmd_data_.yaw_ddot;
       } else {
         if (current_mode_ == GimbalEvent::SET_MODE_AUTOPATROL) {
-          target_pit_cmd_ -=
+          target_roll_cmd_ -=
               patrol_range_ * (2 / static_cast<float>(M_PI)) *
               asin(sin(patrol_omega_ * (LibXR::Timebase::GetMilliseconds() -
                                         patrol_start_time))) /
@@ -268,10 +268,10 @@ class Gimbal : public LibXR::Application {
         } else {
           target_yaw_cmd_ -=
               cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-          target_pit_cmd_ +=
-              cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-          target_pit_dot_ = 0.0f;
-          target_pit_ddot_ = 0.0f;
+          target_roll_cmd_ +=
+              cmd_data_.rol * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+          target_roll_dot_ = 0.0f;
+          target_roll_ddot_ = 0.0f;
           target_yaw_dot_ = 0.0f;
           target_yaw_ddot_ = 0.0f;
         }
@@ -285,22 +285,22 @@ class Gimbal : public LibXR::Application {
   void Control() {
     /*仅用于调试极性()*/
     this->torque_ =
-        -this->pit_lc_ * sinf(PitchFeedbackAngle() + this->pit_theta_);
-    float out_pit = 0.0f;
+        -this->roll_lc_ * sinf(RollFeedbackAngle() + this->roll_theta_);
+    float out_roll = 0.0f;
     float out_yaw = 0.0f;
 
-    PitchLimit(target_pit_cmd_, PitchFeedbackAngle(),
-               motor_pit_feedback_.abs_angle, pit_max_angle_, pit_min_angle_,
+    RollLimit(target_roll_cmd_, RollFeedbackAngle(),
+               motor_roll_feedback_.abs_angle, roll_max_angle_, roll_min_angle_,
                reverse_flag_);
-    Solve(out_pit, out_yaw, target_pit_cmd_, target_yaw_cmd_, dt_);
+    Solve(out_roll, out_yaw, target_roll_cmd_, target_yaw_cmd_, dt_);
     auto yaw_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_yaw});
-    auto pit_motor_cmd = Motor::MotorCmd(
-        {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_pit});
+    auto roll_motor_cmd = Motor::MotorCmd(
+        {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_roll});
 
     if (current_mode_ == GimbalEvent::SET_MODE_RELAX) {
       motor_yaw_->Relax();
-      motor_pit_->Relax();
+      motor_roll_->Relax();
       return;
     }
 
@@ -315,7 +315,7 @@ class Gimbal : public LibXR::Application {
       }
     };
 
-    motor_control(motor_pit_, motor_pit_feedback_, pit_motor_cmd);
+    motor_control(motor_roll_, motor_roll_feedback_, roll_motor_cmd);
     motor_control(motor_yaw_, motor_yaw_feedback_, yaw_motor_cmd);
   }
 
@@ -327,14 +327,14 @@ class Gimbal : public LibXR::Application {
   CMD& cmd_;
   LibXR::PID<float> pid_yaw_angle_;
   LibXR::PID<float> pid_yaw_omega_;
-  LibXR::PID<float> pid_pit_angle_;
-  LibXR::PID<float> pid_pit_omega_;
+  LibXR::PID<float> pid_roll_angle_;
+  LibXR::PID<float> pid_roll_omega_;
   Motor* motor_yaw_;
-  Motor* motor_pit_;
+  Motor* motor_roll_;
   float torque_;
 
   Motor::Feedback motor_yaw_feedback_;
-  Motor::Feedback motor_pit_feedback_;
+  Motor::Feedback motor_roll_feedback_;
 
   CMD::GimbalCMD cmd_data_;
   Eigen::Matrix<float, 3, 1> gyro_data_;
@@ -345,29 +345,29 @@ class Gimbal : public LibXR::Application {
 
   LibXR::Topic topic_yaw_angle_ =
       LibXR::Topic::CreateTopic<float>("yawmotor_angle");
-  LibXR::Topic topic_pit_angle_ =
-      LibXR::Topic::CreateTopic<float>("pitchmotor_angle");
+  LibXR::Topic topic_roll_angle_ =
+      LibXR::Topic::CreateTopic<float>("rollmotor_angle");
 
-  float pit_max_angle_ = 0.0f;
-  float pit_min_angle_ = 0.0f;
-  float pit_lc_ = 0.0f;
-  float pit_theta_ = 0.0f;
+  float roll_max_angle_ = 0.0f;
+  float roll_min_angle_ = 0.0f;
+  float roll_lc_ = 0.0f;
+  float roll_theta_ = 0.0f;
   float yaw_k_ = 0.0f;
   float target_yaw_dot_ = 0.0f;
   float target_yaw_ddot_ = 0.0f;
-  float target_pit_dot_ = 0.0f;
-  float target_pit_ddot_ = 0.0f;
-  float j_pit_ = 0.0f;
+  float target_roll_dot_ = 0.0f;
+  float target_roll_ddot_ = 0.0f;
+  float j_roll_ = 0.0f;
   float j_yaw_ = 0.0f;
-  LibXR::CycleValue<float> pit_zero_ = 0.0f;
+  LibXR::CycleValue<float> roll_zero_ = 0.0f;
   LibXR::CycleValue<float> yaw_zero_ = 0.0f;
   float patrol_range_ = 0.0f;
   float patrol_omega_ = 0.0f;
-  float target_pit_cmd_ = 0.0f;
+  float target_roll_cmd_ = 0.0f;
   LibXR::CycleValue<float> target_yaw_cmd_ = 0.0f;
   float abs_angle_yaw_ = 0.0f;
-  float abs_angle_pit_ = 0.0f;
-  float last_pit_omega_ = 0.0f;
+  float abs_angle_roll_ = 0.0f;
+  float last_roll_omega_ = 0.0f;
   float last_yaw_omega_ = 0.0f;
   float reverse_flag_ = 1.0f;
   LibXR::MillisecondTimestamp patrol_start_time = 0.0f;
@@ -378,26 +378,29 @@ class Gimbal : public LibXR::Application {
 
   /*----------工具函数--------------------------------*/
   /**
-   * @brief 俯仰轴在 x右/y前/z上 坐标系中是绕 X 轴旋转，对应 ZYX 欧拉角 roll。
-   */
-  float PitchFeedbackAngle() const { return euler_.Roll(); }
-
-  /**
-   * @brief 俯仰轴角速度使用右手系 X 轴角速度。
-   */
-  float PitchFeedbackOmega() const { return gyro_data_.x(); }
-
-  /**
-   * @brief Pitch轴角度限位
+   * @brief Roll轴反馈角。
    *
-   * @param target_pit 目标Pitch角度
-   * @param now_eulr_angle 当前Pitch欧拉角
-   * @param now_motor_angle 当前Pitch电机角度
+   * 在 x右/y前/z上 的机体系中，Roll轴就是 X 轴。这里直接读取
+   * LibXR EulerAngle::Roll()。
+   */
+  float RollFeedbackAngle() const { return euler_.Roll(); }
+
+  /**
+   * @brief Roll轴反馈角速度，对应机体系 X 轴角速度。
+   */
+  float RollFeedbackOmega() const { return gyro_data_.x(); }
+
+  /**
+   * @brief Roll轴角度限位
+   *
+   * @param target_roll 目标Roll角度
+   * @param now_eulr_angle 当前Roll反馈角
+   * @param now_motor_angle 当前Roll轴电机角度
    * @param motor_max 电机最大角度
    * @param motor_min 电机最小角度
    * @param sign 方向符号
    */
-  void PitchLimit(float& target_pit, float now_eulr_angle,
+  void RollLimit(float& target_roll, float now_eulr_angle,
                   float now_motor_angle, float motor_max, float motor_min,
                   float sign) {
     if ((motor_max == 0.0f) && (motor_min == 0.0f)) {
@@ -409,38 +412,38 @@ class Gimbal : public LibXR::Application {
 
     float diff_min = cycle_motor_min - now_motor_angle;
     float diff_max = cycle_motor_max - now_motor_angle;
-    float pitch_bound_0 = now_eulr_angle + diff_min / sign;
-    float pitch_bound_1 = now_eulr_angle + diff_max / sign;
+    float roll_bound_0 = now_eulr_angle + diff_min / sign;
+    float roll_bound_1 = now_eulr_angle + diff_max / sign;
 
-    float upper_bound = std::max(pitch_bound_0, pitch_bound_1);
-    float lower_bound = std::min(pitch_bound_0, pitch_bound_1);
-    target_pit = std::clamp(target_pit, lower_bound, upper_bound);
+    float upper_bound = std::max(roll_bound_0, roll_bound_1);
+    float lower_bound = std::min(roll_bound_0, roll_bound_1);
+    target_roll = std::clamp(target_roll, lower_bound, upper_bound);
   }
 
   /**
    * @brief 解算PID控制输出
    *
-   * @param pit_output Pitch轴输出引用
+   * @param roll_output Roll轴输出引用
    * @param yaw_output Yaw轴输出引用
-   * @param target_pit_angle 目标Pitch角度
+   * @param target_roll_angle 目标Roll角度
    * @param target_yaw_angle 目标Yaw角度
    * @param dt_ 时间间隔
    */
-  void Solve(float& pit_output, float& yaw_output, float target_pit_angle,
+  void Solve(float& roll_output, float& yaw_output, float target_roll_angle,
              const LibXR::CycleValue<float>& target_yaw_angle, float dt_) {
-    const float pitch_feedback = PitchFeedbackAngle();
-    float pit_error = target_pit_angle - pitch_feedback;
-    float target_pit_omega =
-        pid_pit_angle_.Calculate(pit_error, 0.0f, dt_) + target_pit_dot_;
-    float ff_pit =
-        JFeedforward(target_pit_omega, last_pit_omega_, dt_, j_pit_) +
-        j_pit_ * target_pit_ddot_;
-    float gravity_ff_pit =
-        -this->pit_lc_ * sinf(pitch_feedback + this->pit_theta_);
-    float fb_pit =
-        pid_pit_omega_.Calculate(target_pit_omega, PitchFeedbackOmega(), dt_);
-    pit_output = ff_pit + fb_pit + gravity_ff_pit;
-    last_pit_omega_ = target_pit_omega;
+    const float roll_feedback = RollFeedbackAngle();
+    float roll_error = target_roll_angle - roll_feedback;
+    float target_roll_omega =
+        pid_roll_angle_.Calculate(roll_error, 0.0f, dt_) + target_roll_dot_;
+    float ff_roll =
+        JFeedforward(target_roll_omega, last_roll_omega_, dt_, j_roll_) +
+        j_roll_ * target_roll_ddot_;
+    float gravity_ff_roll =
+        -this->roll_lc_ * sinf(roll_feedback + this->roll_theta_);
+    float fb_roll =
+        pid_roll_omega_.Calculate(target_roll_omega, RollFeedbackOmega(), dt_);
+    roll_output = ff_roll + fb_roll + gravity_ff_roll;
+    last_roll_omega_ = target_roll_omega;
     float yaw_error = target_yaw_angle - euler_.Yaw();
     float target_yaw_omega =
         pid_yaw_angle_.Calculate(yaw_error, 0.0f, dt_) + target_yaw_dot_;
@@ -484,46 +487,46 @@ class Gimbal : public LibXR::Application {
     switch (gimbal_event) {
       case GimbalEvent::SET_MODE_RELAX:
         motor_yaw_->Disable();
-        motor_pit_->Disable();
-        pid_pit_angle_.Reset();
-        pid_pit_omega_.Reset();
+        motor_roll_->Disable();
+        pid_roll_angle_.Reset();
+        pid_roll_omega_.Reset();
         pid_yaw_angle_.Reset();
         pid_yaw_omega_.Reset();
-        target_pit_cmd_ = 0.0f;
+        target_roll_cmd_ = 0.0f;
         target_yaw_cmd_ = 0.0f;
         target_yaw_dot_ = 0.0f;
         target_yaw_ddot_ = 0.0f;
-        target_pit_dot_ = 0.0f;
-        target_pit_ddot_ = 0.0f;
+        target_roll_dot_ = 0.0f;
+        target_roll_ddot_ = 0.0f;
         break;
       case GimbalEvent::SET_MODE_COMMON:
-        target_pit_cmd_ = PitchFeedbackAngle();
+        target_roll_cmd_ = RollFeedbackAngle();
         target_yaw_cmd_ = euler_.Yaw();
-        pid_pit_angle_.Reset();
-        pid_pit_omega_.Reset();
+        pid_roll_angle_.Reset();
+        pid_roll_omega_.Reset();
         pid_yaw_angle_.Reset();
         pid_yaw_omega_.Reset();
-        last_pit_omega_ = 0.0f;
+        last_roll_omega_ = 0.0f;
         last_yaw_omega_ = 0.0f;
         target_yaw_dot_ = 0.0f;
         target_yaw_ddot_ = 0.0f;
-        target_pit_dot_ = 0.0f;
-        target_pit_ddot_ = 0.0f;
+        target_roll_dot_ = 0.0f;
+        target_roll_ddot_ = 0.0f;
         break;
       case GimbalEvent::SET_MODE_AUTOPATROL:
         patrol_start_time = LibXR::Timebase::GetMilliseconds();
-        target_pit_cmd_ = PitchFeedbackAngle();
+        target_roll_cmd_ = RollFeedbackAngle();
         target_yaw_cmd_ = euler_.Yaw();
-        pid_pit_angle_.Reset();
-        pid_pit_omega_.Reset();
+        pid_roll_angle_.Reset();
+        pid_roll_omega_.Reset();
         pid_yaw_angle_.Reset();
         pid_yaw_omega_.Reset();
-        last_pit_omega_ = 0.0f;
+        last_roll_omega_ = 0.0f;
         last_yaw_omega_ = 0.0f;
         target_yaw_dot_ = 0.0f;
         target_yaw_ddot_ = 0.0f;
-        target_pit_dot_ = 0.0f;
-        target_pit_ddot_ = 0.0f;
+        target_roll_dot_ = 0.0f;
+        target_roll_ddot_ = 0.0f;
         break;
       default:
         break;

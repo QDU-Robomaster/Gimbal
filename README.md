@@ -1,7 +1,7 @@
 # Gimbal
 
 ## 1. 模块作用
-云台控制模块。实现俯仰/偏航闭环控制和模式切换。
+云台控制模块。实现 roll/yaw 闭环控制和模式切换。
 
 ## 2. 主要函数说明
 1. ThreadFunc: 云台控制主线程。
@@ -12,7 +12,7 @@
 6. DebugCommand: 调试命令入口（Debug 构建）。
 
 ## 3. 接入步骤
-1. 添加模块并绑定 motor_pitch、motor_yaw、cmd。
+1. 添加模块并绑定 motor_roll、motor_yaw、cmd。
 2. 配置零位、限位、惯量与 PID 参数。
 3. 先验证模式切换，再联调控制参数。
 
@@ -49,7 +49,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: true
-  - pid_pit_angle:
+  - pid_roll_angle:
       k: 0.0
       p: 0.0
       i: 0.0
@@ -57,7 +57,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - pid_pit_omega:
+  - pid_roll_omega:
       k: 0.0
       p: 0.0
       i: 0.0
@@ -65,15 +65,21 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_pitch: '@&motor_pit'
+  - motor_roll: '@&motor_roll'
   - motor_yaw: '@&motor_yaw'
-  - pit_max_angle: 0.0
-  - pit_min_angle: 0.0
-  - j_pit: 0.0
+  - roll_max_angle: 0.0
+  - roll_min_angle: 0.0
+  - roll_lc: 0.0
+  - roll_theta: 0.0
+  - yaw_k: 0.0
+  - j_roll: 0.0
   - j_yaw: 0.0
-  - pit_zero: 0.0
+  - roll_zero: 0.0
   - yaw_zero: 0.0
-  - pit_reverse_flag: false
+  - patrol_range: 0.0
+  - patrol_omega: 0.0
+  - roll_reverse_flag: false
+  - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args:
 []
 
