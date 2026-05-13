@@ -203,12 +203,10 @@ class Gimbal : public LibXR::Application {
       }
       if (euler_suber.Available()) {
         gimbal->euler_ = euler_suber.GetData();
-        gimbal->euler_.Pitch() *= -1.0f;
         euler_suber.StartWaiting();
       }
       if (gyro_suber.Available()) {
         gimbal->gyro_data_ = gyro_suber.GetData();
-        gimbal->gyro_data_.y() *= -1.0f;
         gyro_suber.StartWaiting();
       }
 
@@ -254,9 +252,9 @@ class Gimbal : public LibXR::Application {
     } else {
       if (cmd_.GetAIGimbalStatus()) {
         target_yaw_cmd_ = cmd_data_.yaw;
-        target_pit_cmd_ = cmd_data_.pit;
-        target_pit_dot_ = cmd_data_.pit_dot;
-        target_pit_ddot_ = cmd_data_.pit_ddot;
+        target_pit_cmd_ = cmd_data_.rol;
+        target_pit_dot_ = cmd_data_.rol_dot;
+        target_pit_ddot_ = cmd_data_.rol_ddot;
         target_yaw_dot_ = cmd_data_.yaw_dot;
         target_yaw_ddot_ = cmd_data_.yaw_ddot;
       } else {
@@ -286,12 +284,14 @@ class Gimbal : public LibXR::Application {
    */
   void Control() {
     /*仅用于调试极性()*/
-    this->torque_ = -this->pit_lc_ * sinf(euler_.Pitch() + this->pit_theta_);
+    this->torque_ =
+        -this->pit_lc_ * sinf(PitchFeedbackAngle() + this->pit_theta_);
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
 
-    PitchLimit(target_pit_cmd_, euler_.Pitch(), motor_pit_feedback_.abs_angle,
-               pit_max_angle_, pit_min_angle_, reverse_flag_);
+    PitchLimit(target_pit_cmd_, PitchFeedbackAngle(),
+               motor_pit_feedback_.abs_angle, pit_max_angle_, pit_min_angle_,
+               reverse_flag_);
     Solve(out_pit, out_yaw, target_pit_cmd_, target_yaw_cmd_, dt_);
     auto yaw_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_yaw});
@@ -378,6 +378,16 @@ class Gimbal : public LibXR::Application {
 
   /*----------工具函数--------------------------------*/
   /**
+   * @brief 俯仰轴在 x右/y前/z上 坐标系中是绕 X 轴旋转，对应 ZYX 欧拉角 roll。
+   */
+  float PitchFeedbackAngle() const { return euler_.Roll(); }
+
+  /**
+   * @brief 俯仰轴角速度使用右手系 X 轴角速度。
+   */
+  float PitchFeedbackOmega() const { return gyro_data_.x(); }
+
+  /**
    * @brief Pitch轴角度限位
    *
    * @param target_pit 目标Pitch角度
@@ -418,16 +428,17 @@ class Gimbal : public LibXR::Application {
    */
   void Solve(float& pit_output, float& yaw_output, float target_pit_angle,
              const LibXR::CycleValue<float>& target_yaw_angle, float dt_) {
-    float pit_error = target_pit_angle - euler_.Pitch();
+    const float pitch_feedback = PitchFeedbackAngle();
+    float pit_error = target_pit_angle - pitch_feedback;
     float target_pit_omega =
         pid_pit_angle_.Calculate(pit_error, 0.0f, dt_) + target_pit_dot_;
     float ff_pit =
         JFeedforward(target_pit_omega, last_pit_omega_, dt_, j_pit_) +
         j_pit_ * target_pit_ddot_;
     float gravity_ff_pit =
-        -this->pit_lc_ * sinf(euler_.Pitch() + this->pit_theta_);
+        -this->pit_lc_ * sinf(pitch_feedback + this->pit_theta_);
     float fb_pit =
-        pid_pit_omega_.Calculate(target_pit_omega, gyro_data_.y(), dt_);
+        pid_pit_omega_.Calculate(target_pit_omega, PitchFeedbackOmega(), dt_);
     pit_output = ff_pit + fb_pit + gravity_ff_pit;
     last_pit_omega_ = target_pit_omega;
     float yaw_error = target_yaw_angle - euler_.Yaw();
@@ -486,7 +497,7 @@ class Gimbal : public LibXR::Application {
         target_pit_ddot_ = 0.0f;
         break;
       case GimbalEvent::SET_MODE_COMMON:
-        target_pit_cmd_ = euler_.Pitch();
+        target_pit_cmd_ = PitchFeedbackAngle();
         target_yaw_cmd_ = euler_.Yaw();
         pid_pit_angle_.Reset();
         pid_pit_omega_.Reset();
@@ -501,7 +512,7 @@ class Gimbal : public LibXR::Application {
         break;
       case GimbalEvent::SET_MODE_AUTOPATROL:
         patrol_start_time = LibXR::Timebase::GetMilliseconds();
-        target_pit_cmd_ = euler_.Pitch();
+        target_pit_cmd_ = PitchFeedbackAngle();
         target_yaw_cmd_ = euler_.Yaw();
         pid_pit_angle_.Reset();
         pid_pit_omega_.Reset();
