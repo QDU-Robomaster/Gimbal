@@ -21,7 +21,7 @@ constructor_args:
       d: 0.0
       i_limit: 0.0
       out_limit: 0.0
-      cycle: true
+      cycle: false
   - pid_roll_angle:
       k: 0.0
       p: 0.0
@@ -29,7 +29,7 @@ constructor_args:
       d: 0.0
       i_limit: 0.0
       out_limit: 0.0
-      cycle: false
+      cycle: true
   - pid_roll_omega:
       k: 0.0
       p: 0.0
@@ -52,6 +52,7 @@ constructor_args:
   - patrol_range: 0.0
   - patrol_omega: 0.0
   - roll_reverse_flag: false
+  - referee: '@&referee'
   - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
@@ -67,6 +68,7 @@ depends:
 
 #include "CMD.hpp"
 #include "Motor.hpp"
+#include "Referee.hpp"
 #include "app_framework.hpp"
 #include "cycle_value.hpp"
 #include "event.hpp"
@@ -85,6 +87,7 @@ enum class GimbalEvent : uint8_t {
   SET_MODE_RELAX,
   SET_MODE_COMMON,
   SET_MODE_AUTOPATROL,
+  SET_MODE_LOW_SENSITIVITY
 };
 
 class Gimbal : public LibXR::Application {
@@ -119,9 +122,10 @@ class Gimbal : public LibXR::Application {
       LibXR::PID<float>::Param pid_yaw_omega,
       LibXR::PID<float>::Param pid_roll_angle,
       LibXR::PID<float>::Param pid_roll_omega, Motor* motor_roll,
-      Motor* motor_yaw, float roll_max_angle, float roll_min_angle, float roll_lc,
-      float roll_theta, float yaw_k, float j_roll, float j_yaw, float roll_zero,
-      float yaw_zero, float patrol_range, float patrol_omega, bool reverse_flag,
+      Motor* motor_yaw, float roll_max_angle, float roll_min_angle,
+      float roll_lc, float roll_theta, float yaw_k, float j_roll, float j_yaw,
+      float roll_zero, float yaw_zero, float patrol_range, float patrol_omega,
+      bool reverse_flag, Referee* referee,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : cmd_(cmd),
         pid_yaw_angle_(pid_yaw_angle),
@@ -141,8 +145,10 @@ class Gimbal : public LibXR::Application {
         yaw_zero_(yaw_zero),
         patrol_range_(patrol_range),
         patrol_omega_(patrol_omega),
-        reverse_flag_(reverse_flag ? 1.0f : -1.0f) {
+        reverse_flag_(reverse_flag ? 1.0f : -1.0f),
+        referee_(referee) {
     UNUSED(app);
+UNUSED(referee_);
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
                    thread_priority);
@@ -158,7 +164,7 @@ class Gimbal : public LibXR::Application {
         [](bool in_isr, Gimbal* gimbal, uint32_t event_id) {
           UNUSED(in_isr);
           UNUSED(event_id);
-          gimbal->SetMode(GimbalEvent::SET_MODE_COMMON);
+          gimbal->SetMode(GimbalEvent::SET_MODE_RELAX);
         },
         this);
 
@@ -177,6 +183,8 @@ class Gimbal : public LibXR::Application {
                            callback);
     gimbal_event_.Register(
         static_cast<uint32_t>(GimbalEvent::SET_MODE_AUTOPATROL), callback);
+    gimbal_event_.Register(
+        static_cast<uint32_t>(GimbalEvent::SET_MODE_LOW_SENSITIVITY), callback);
   };
 
   /**
@@ -187,9 +195,9 @@ class Gimbal : public LibXR::Application {
   static void ThreadFunc(Gimbal* gimbal) {
     LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
-        "gimbal_euler");
+        "ahrs_euler");
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
-        "gimbal_gyro");
+        "bmi088_gyro");
     cmd_suber.StartWaiting();
     euler_suber.StartWaiting();
     gyro_suber.StartWaiting();
@@ -242,13 +250,21 @@ class Gimbal : public LibXR::Application {
    */
   void ParseCMD() {
     if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
-      target_yaw_cmd_ -= cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-      target_roll_cmd_ += cmd_data_.rol * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
-      target_roll_dot_ = 0.0f;
-      target_roll_ddot_ = 0.0f;
-      target_yaw_dot_ = 0.0f;
-      target_yaw_ddot_ = 0.0f;
-
+      if (current_mode_ == GimbalEvent::SET_MODE_LOW_SENSITIVITY) {
+        target_yaw_cmd_ -= cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+        target_roll_cmd_ += cmd_data_.rol * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+        target_roll_dot_ = 0.0f;
+        target_roll_ddot_ = 0.0f;
+        target_yaw_dot_ = 0.0f;
+        target_yaw_ddot_ = 0.0f;
+      } else {
+        target_yaw_cmd_ -= cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+        target_roll_cmd_ += cmd_data_.rol * this->dt_ * GIMBAL_MAX_SPEED * 1.0f;
+        target_roll_dot_ = 0.0f;
+        target_roll_ddot_ = 0.0f;
+        target_yaw_dot_ = 0.0f;
+        target_yaw_ddot_ = 0.0f;
+      }
     } else {
       if (cmd_.GetAIGimbalStatus()) {
         target_yaw_cmd_ = cmd_data_.yaw;
@@ -290,8 +306,8 @@ class Gimbal : public LibXR::Application {
     float out_yaw = 0.0f;
 
     RollLimit(target_roll_cmd_, RollFeedbackAngle(),
-               motor_roll_feedback_.abs_angle, roll_max_angle_, roll_min_angle_,
-               reverse_flag_);
+              motor_roll_feedback_.abs_angle, roll_max_angle_, roll_min_angle_,
+              reverse_flag_);
     Solve(out_roll, out_yaw, target_roll_cmd_, target_yaw_cmd_, dt_);
     auto yaw_motor_cmd = Motor::MotorCmd(
         {.mode = Motor::ControlMode::MODE_TORQUE, .torque = out_yaw});
@@ -373,7 +389,7 @@ class Gimbal : public LibXR::Application {
   LibXR::MillisecondTimestamp patrol_start_time = 0.0f;
   float dt_ = 0.0f;
   LibXR::MicrosecondTimestamp last_online_time_;
-
+  Referee* referee_;
   LibXR::Thread thread_;
 
   /*----------工具函数--------------------------------*/
@@ -401,8 +417,8 @@ class Gimbal : public LibXR::Application {
    * @param sign 方向符号
    */
   void RollLimit(float& target_roll, float now_eulr_angle,
-                  float now_motor_angle, float motor_max, float motor_min,
-                  float sign) {
+                 float now_motor_angle, float motor_max, float motor_min,
+                 float sign) {
     if ((motor_max == 0.0f) && (motor_min == 0.0f)) {
       return;
     };
@@ -482,6 +498,13 @@ class Gimbal : public LibXR::Application {
     if (gimbal_event == current_mode_) {
       return;
     };
+    if ((current_mode_ == GimbalEvent::SET_MODE_COMMON &&
+         gimbal_event == GimbalEvent::SET_MODE_LOW_SENSITIVITY) ||
+        (current_mode_ == GimbalEvent::SET_MODE_LOW_SENSITIVITY &&
+         gimbal_event == GimbalEvent::SET_MODE_COMMON)) {
+      current_mode_ = gimbal_event;
+      return;
+    }
     current_mode_ = gimbal_event;
 
     switch (gimbal_event) {
@@ -516,6 +539,20 @@ class Gimbal : public LibXR::Application {
       case GimbalEvent::SET_MODE_AUTOPATROL:
         patrol_start_time = LibXR::Timebase::GetMilliseconds();
         target_roll_cmd_ = RollFeedbackAngle();
+        target_yaw_cmd_ = euler_.Yaw();
+        pid_roll_angle_.Reset();
+        pid_roll_omega_.Reset();
+        pid_yaw_angle_.Reset();
+        pid_yaw_omega_.Reset();
+        last_roll_omega_ = 0.0f;
+        last_yaw_omega_ = 0.0f;
+        target_yaw_dot_ =  0.0f;
+        target_yaw_ddot_ =  0.0f;
+        target_roll_dot_ =  0.0f;
+        target_roll_ddot_ = 0.0f;
+        break;
+      case GimbalEvent::SET_MODE_LOW_SENSITIVITY:
+        target_roll_cmd_ = euler_.Pitch();
         target_yaw_cmd_ = euler_.Yaw();
         pid_roll_angle_.Reset();
         pid_roll_omega_.Reset();

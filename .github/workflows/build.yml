@@ -121,6 +121,7 @@ jobs:
           xrobot_add_mod BMI088 --instance-id bmi088
           xrobot_add_mod MadgwickAHRS --instance-id ahrs
           xrobot_add_mod CMD --instance-id cmd
+          xrobot_add_mod Referee --instance-id referee
 
       - name: Add this repo module
         run: |
