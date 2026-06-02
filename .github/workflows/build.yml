@@ -122,7 +122,7 @@ jobs:
       - name: Add  modules
         run: |
           xrobot_add_mod BlinkLED --instance-id BlinkLED_0
-          xrobot_add_mod RMMotor --instance-id motor_roll
+          xrobot_add_mod RMMotor --instance-id motor_pit
           xrobot_add_mod RMMotor --instance-id motor_yaw
           xrobot_add_mod BMI088 --instance-id bmi088
           xrobot_add_mod MadgwickAHRS --instance-id ahrs
