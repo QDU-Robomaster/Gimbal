@@ -92,6 +92,12 @@ jobs:
           ref: master
           path: Modules/MadgwickAHRS
 
+      - name: Checkout Referee module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/Referee
+          path: Modules/Referee
+
       - name: Setup Python & Install deps
         run: |
           python3 -m pip install --upgrade pip
@@ -121,6 +127,7 @@ jobs:
           xrobot_add_mod BMI088 --instance-id bmi088
           xrobot_add_mod MadgwickAHRS --instance-id ahrs
           xrobot_add_mod CMD --instance-id cmd
+          xrobot_add_mod Referee --instance-id ref
 
       - name: Add this repo module
         run: |
