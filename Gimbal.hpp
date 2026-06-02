@@ -52,6 +52,7 @@ constructor_args:
   - patrol_range: 0.0
   - patrol_omega: 0.0
   - pit_reverse_flag: false
+  - referee: '@&ref'
   - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
