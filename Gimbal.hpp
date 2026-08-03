@@ -4,7 +4,7 @@
 /* === MODULE MANIFEST V2 ===
 module_description: No description provided
 constructor_args:
-  - cmd: '@cmd'
+  - cmd: '@nullptr'
   - task_stack_depth: 2048
   - pid_yaw_angle:
       k: 0.0
@@ -38,8 +38,8 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_pitch: '@&motor_pit'
-  - motor_yaw: '@&motor_yaw'
+  - motor_pitch: '@nullptr'
+  - motor_yaw: '@nullptr'
   - pit_max_angle: 0.0
   - pit_min_angle: 0.0
   - pit_lc: 0.0
@@ -52,14 +52,15 @@ constructor_args:
   - patrol_range: 0.0
   - patrol_omega: 0.0
   - pit_reverse_flag: false
-  - referee: '@&ref'
+  - referee: '@nullptr'
   - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
 depends:
   - qdu-future/CMD
   - qdu-future/Motor
-  - qdu-future/BMI088
+  - xrobot-org/BMI088
+  - qdu-future/Referee
 === END MANIFEST === */
 // clang-format on
 
@@ -117,7 +118,7 @@ class Gimbal : public LibXR::Application {
    * @param reverse_flag Pitch轴反转标志
    */
   Gimbal(
-      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD* cmd,
       uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
       LibXR::PID<float>::Param pid_yaw_omega,
       LibXR::PID<float>::Param pid_pit_angle,
@@ -147,8 +148,16 @@ class Gimbal : public LibXR::Application {
         patrol_omega_(patrol_omega),
         reverse_flag_(reverse_flag ? 1.0f : -1.0f),
         referee_(referee) {
+    UNUSED(hw);
     UNUSED(app);
     UNUSED(referee_);
+
+    ASSERT(cmd_ != nullptr);
+    ASSERT(motor_yaw_ != nullptr);
+    ASSERT(motor_pit_ != nullptr);
+
+    topic_yaw_angle_ = LibXR::Topic::CreateTopic<float>("yawmotor_angle");
+    topic_pit_angle_ = LibXR::Topic::CreateTopic<float>("pitchmotor_angle");
 
     thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth,
                    thread_priority);
@@ -175,8 +184,8 @@ class Gimbal : public LibXR::Application {
         },
         this);
 
-    cmd_.GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
-    cmd_.GetEvent().Register(CMD::CMD_EVENT_START_CTRL, start_ctrl_callback);
+    cmd_->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
+    cmd_->GetEvent().Register(CMD::CMD_EVENT_START_CTRL, start_ctrl_callback);
     gimbal_event_.Register(static_cast<uint32_t>(GimbalEvent::SET_MODE_RELAX),
                            callback);
     gimbal_event_.Register(static_cast<uint32_t>(GimbalEvent::SET_MODE_COMMON),
@@ -186,6 +195,23 @@ class Gimbal : public LibXR::Application {
     gimbal_event_.Register(
         static_cast<uint32_t>(GimbalEvent::SET_MODE_LOW_SENSITIVITY), callback);
   };
+
+  Gimbal(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
+      uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
+      LibXR::PID<float>::Param pid_yaw_omega,
+      LibXR::PID<float>::Param pid_pit_angle,
+      LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit,
+      Motor* motor_yaw, float pit_max_angle, float pit_min_angle, float pit_lc,
+      float pit_theta, float yaw_k, float j_pit, float j_yaw, float pit_zero,
+      float yaw_zero, float patrol_range, float patrol_omega, bool reverse_flag,
+      Referee* referee,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
+      : Gimbal(hw, app, &cmd, task_stack_depth, pid_yaw_angle, pid_yaw_omega,
+               pid_pit_angle, pid_pit_omega, motor_pit, motor_yaw,
+               pit_max_angle, pit_min_angle, pit_lc, pit_theta, yaw_k, j_pit,
+               j_yaw, pit_zero, yaw_zero, patrol_range, patrol_omega,
+               reverse_flag, referee, thread_priority) {}
 
   /**
    * @brief 线程函数
@@ -251,7 +277,7 @@ class Gimbal : public LibXR::Application {
    * @brief 解析云台控制命令
    */
   void ParseCMD() {
-    if (cmd_.GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
+    if (cmd_->GetCtrlMode() == CMD::Mode::CMD_OP_CTRL) {
       if (current_mode_ == GimbalEvent::SET_MODE_LOW_SENSITIVITY) {
         target_yaw_cmd_ += cmd_data_.yaw * this->dt_ * GIMBAL_MAX_SPEED * 0.1f;
         target_pit_cmd_ += cmd_data_.pit * this->dt_ * GIMBAL_MAX_SPEED * 0.1f;
@@ -268,7 +294,7 @@ class Gimbal : public LibXR::Application {
         target_yaw_ddot_ = 0.0f;
       }
     } else {
-      if (cmd_.GetAIGimbalStatus()) {
+      if (cmd_->GetAIGimbalStatus()) {
         target_yaw_cmd_ = cmd_data_.yaw;
         target_pit_cmd_ = cmd_data_.pit;
         target_pit_dot_ = cmd_data_.pit_dot;
@@ -340,7 +366,7 @@ class Gimbal : public LibXR::Application {
   LibXR::Event& GetEvent() { return gimbal_event_; }
 
  private:
-  CMD& cmd_;
+  CMD* cmd_;
   LibXR::PID<float> pid_yaw_angle_;
   LibXR::PID<float> pid_yaw_omega_;
   LibXR::PID<float> pid_pit_angle_;
@@ -359,10 +385,8 @@ class Gimbal : public LibXR::Application {
   LibXR::Event gimbal_event_;
   GimbalEvent current_mode_ = GimbalEvent::SET_MODE_RELAX;
 
-  LibXR::Topic topic_yaw_angle_ =
-      LibXR::Topic::CreateTopic<float>("yawmotor_angle");
-  LibXR::Topic topic_pit_angle_ =
-      LibXR::Topic::CreateTopic<float>("pitchmotor_angle");
+  LibXR::Topic topic_yaw_angle_;
+  LibXR::Topic topic_pit_angle_;
 
   float pit_max_angle_ = 0.0f;
   float pit_min_angle_ = 0.0f;
@@ -557,4 +581,5 @@ class Gimbal : public LibXR::Application {
         break;
     }
   }
+
 };
