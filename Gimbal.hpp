@@ -8,8 +8,6 @@ depends:
   ref: same-or-dev
 - id: QDU-Robomaster/Motor
   ref: same-or-dev
-- id: QDU-Robomaster/BMI088
-  ref: same-or-dev
 - id: QDU-Robomaster/Referee
   ref: same-or-dev
 === END MANIFEST === */
