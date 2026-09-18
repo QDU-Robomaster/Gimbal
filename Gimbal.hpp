@@ -42,59 +42,66 @@ enum class GimbalEvent : uint8_t
 class Gimbal
 {
  public:
+  struct Param
+  {
+    uint32_t task_stack_depth;  ///< 任务堆栈深度
+    LibXR::PID<float>::Param pid_yaw_angle;  ///< Yaw轴角度环PID参数
+    LibXR::PID<float>::Param pid_yaw_omega;  ///< Yaw轴角速度环PID参数
+    LibXR::PID<float>::Param pid_pit_angle;  ///< Pitch轴角度环PID参数
+    LibXR::PID<float>::Param pid_pit_omega;  ///< Pitch轴角速度环PID参数
+    float pit_max_angle;  ///< Pitch轴最大角度
+    float pit_min_angle;  ///< Pitch轴最小角度
+    float pit_lc;  ///< Pitch质心距离(m)(距离水平向上为+)*Pitch质心重力(N)
+    float pit_theta;  ///< Pitch质心与重力轴线夹角(rad 极性自己猜)
+    float yaw_k;  ///< Yaw轴阻力系数
+    float j_pit;  ///< Pitch轴转动惯量
+    float j_yaw;  ///< Yaw轴转动惯量
+    float pit_zero;  ///< Pitch轴零点
+    float yaw_zero;  ///< Yaw轴零点
+    float patrol_range;
+    float patrol_omega;
+    bool reverse_flag;  ///< Pitch轴反转标志
+    LibXR::Thread::Priority thread_priority;
+  };
+
   /**
    * @brief 构造函数初始化数据成员
    *
    * @param cmd 命令模块实例
-   * @param task_stack_depth 任务堆栈深度
-   * @param pid_yaw_angle Yaw轴角度环PID参数
-   * @param pid_yaw_omega Yaw轴角速度环PID参数
-   * @param pid_pit_angle Pitch轴角度环PID参数
-   * @param pid_pit_omega Pitch轴角速度环PID参数
+   * @param param Value configuration.
    * @param motor_pit Pitch轴电机指针
    * @param motor_yaw Yaw轴电机指针
-   * @param pit_max_angle Pitch轴最大角度
-   * @param pit_min_angle Pitch轴最小角度
-   * @param pit_lc Pitch质心距离(m)(距离水平向上为+)*Pitch质心重力(N)
-   * @param pit_theta Pitch质心与重力轴线夹角(rad 极性自己猜)
-   * @param yaw_k Yaw轴阻力系数
-   * @param j_pit Pitch轴转动惯量
-   * @param j_yaw Yaw轴转动惯量
-   * @param pit_zero Pitch轴零点
-   * @param yaw_zero Yaw轴零点
-   * @param reverse_flag Pitch轴反转标志
    */
-  Gimbal(CMD& cmd, uint32_t task_stack_depth, LibXR::PID<float>::Param pid_yaw_angle,
-         LibXR::PID<float>::Param pid_yaw_omega, LibXR::PID<float>::Param pid_pit_angle,
-         LibXR::PID<float>::Param pid_pit_omega, Motor* motor_pit, Motor* motor_yaw,
-         float pit_max_angle, float pit_min_angle, float pit_lc, float pit_theta,
-         float yaw_k, float j_pit, float j_yaw, float pit_zero, float yaw_zero,
-         float patrol_range, float patrol_omega, bool reverse_flag, Referee* referee,
-         LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
+  Gimbal(
+      CMD& cmd,
+      Motor& motor_pit,
+      Motor& motor_yaw,
+      Referee* referee,
+      const Param& param = {.task_stack_depth = 2048, .pid_yaw_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_yaw_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_pit_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pid_pit_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pit_max_angle = 0.0f, .pit_min_angle = 0.0f, .pit_lc = 0.0f, .pit_theta = 0.0f, .yaw_k = 0.0f, .j_pit = 0.0f, .j_yaw = 0.0f, .pit_zero = 0.0f, .yaw_zero = 0.0f, .patrol_range = 0.0f, .patrol_omega = 0.0f, .reverse_flag = true, .thread_priority = LibXR::Thread::Priority::MEDIUM})
       : cmd_(cmd),
-        pid_yaw_angle_(pid_yaw_angle),
-        pid_yaw_omega_(pid_yaw_omega),
-        pid_pit_angle_(pid_pit_angle),
-        pid_pit_omega_(pid_pit_omega),
-        motor_yaw_(motor_yaw),
-        motor_pit_(motor_pit),
-        pit_max_angle_(pit_max_angle),
-        pit_min_angle_(pit_min_angle),
-        pit_lc_(pit_lc),
-        pit_theta_(pit_theta),
-        yaw_k_(yaw_k),
-        j_pit_(j_pit),
-        j_yaw_(j_yaw),
-        pit_zero_(pit_zero),
-        yaw_zero_(yaw_zero),
-        patrol_range_(patrol_range),
-        patrol_omega_(patrol_omega),
-        reverse_flag_(reverse_flag ? 1.0f : -1.0f),
+        pid_yaw_angle_(param.pid_yaw_angle),
+        pid_yaw_omega_(param.pid_yaw_omega),
+        pid_pit_angle_(param.pid_pit_angle),
+        pid_pit_omega_(param.pid_pit_omega),
+        motor_yaw_(&motor_yaw),
+        motor_pit_(&motor_pit),
+        pit_max_angle_(param.pit_max_angle),
+        pit_min_angle_(param.pit_min_angle),
+        pit_lc_(param.pit_lc),
+        pit_theta_(param.pit_theta),
+        yaw_k_(param.yaw_k),
+        j_pit_(param.j_pit),
+        j_yaw_(param.j_yaw),
+        pit_zero_(param.pit_zero),
+        yaw_zero_(param.yaw_zero),
+        patrol_range_(param.patrol_range),
+        patrol_omega_(param.patrol_omega),
+        reverse_flag_(param.reverse_flag ? 1.0f : -1.0f),
         referee_(referee)
   {
     UNUSED(referee_);
 
-    thread_.Create(this, ThreadFunc, "GimbalThread", task_stack_depth, thread_priority);
+    thread_.Create(this, ThreadFunc, "GimbalThread", param.task_stack_depth, param.thread_priority);
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Gimbal* gimbal, uint32_t event_id)
         {
