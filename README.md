@@ -18,8 +18,8 @@
 
 云台姿态输入 topic：
 - `gimbal_cmd`：CMD 发布的云台控制命令。
-- `gimbal_euler`：云台 IMU 融合后的欧拉角。
-- `gimbal_gyro`：云台 IMU 原始角速度。
+- `param.euler_topic_name`（默认 `ahrs_euler`）：云台 IMU 融合后的欧拉角。
+- `param.gyro_topic_name`（默认 `bmi088_gyro`）：云台 IMU 原始角速度。
 
 
 标准命令流程：
