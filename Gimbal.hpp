@@ -315,8 +315,6 @@ class Gimbal
     motor_control(motor_yaw_, motor_yaw_feedback_, yaw_motor_cmd);
   }
 
-  void OnMonitor() {}
-
   LibXR::Event& GetEvent() { return gimbal_event_; }
 
  private:
