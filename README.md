@@ -31,7 +31,7 @@ Topic：
 
 | Topic | 方向 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `gimbal_cmd` | 订阅 | `CMD::GimbalCMD` | CMD 发布的云台命令 |
+| `param.gimbal_cmd_topic_name`（默认 `gimbal_cmd`） | 订阅 | `CMD::GimbalCMD` | CMD 发布的云台命令 |
 | `param.euler_topic_name`（默认 `ahrs_euler`） | 订阅 | `LibXR::EulerAngle<float>` | 云台 IMU 姿态，pitch 取反后使用 |
 | `param.gyro_topic_name`（默认 `bmi088_gyro`） | 订阅 | `Eigen::Matrix<float, 3, 1>` | 云台 IMU 角速度，y 分量取反后使用 |
 | `yawmotor_angle` | 发布 | `float` | yaw 电机 `abs_angle - yaw_zero` (rad)，底盘跟随使用 |
@@ -77,6 +77,7 @@ Gimbal(CMD& cmd,
 - `thread_priority`：线程优先级，默认 `MEDIUM`。
 - `euler_topic_name`：订阅的姿态 Topic，默认 `"ahrs_euler"`。
 - `gyro_topic_name`：订阅的角速度 Topic，默认 `"bmi088_gyro"`。
+- `gimbal_cmd_topic_name`：订阅的云台控制命令 Topic，默认 `"gimbal_cmd"`。
 
 ## 使用
 
@@ -147,13 +148,15 @@ modules:
           thread_priority: LibXR::Thread::Priority::MEDIUM
           euler_topic_name: '"ahrs_euler"'
           gyro_topic_name: '"bmi088_gyro"'
+          gimbal_cmd_topic_name: '"gimbal_cmd"'
 ```
 
 `cmd`、`motor_pit`、`motor_yaw` 是其他模块实例的 id，须在本实例之前列出：`cmd` 由
 `QDU-Robomaster/CMD` 提供，`motor_pit` / `motor_yaw` 为 `QDU-Robomaster/DMMotor`（或其他 `Motor`
 驱动）实例。`referee` 也可以填 `QDU-Robomaster/Referee` 实例的 id（指针参数会取其地址）。
 本例没有需要 BSP 用 `XR_REGISTER` 注册的对象；`euler_topic_name` / `gyro_topic_name` 必须与
-BSP 中 IMU 与姿态解算实例发布的 Topic 名一致。
+BSP 中 IMU 与姿态解算实例发布的 Topic 名一致，`gimbal_cmd_topic_name` 必须与 CMD 的
+`gimbal_cmd_topic_name` 一致。
 
 填好后再次运行 `xrobot setup`，生成 `User/xrobot_main.hpp`。
 
