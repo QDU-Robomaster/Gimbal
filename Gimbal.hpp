@@ -64,6 +64,7 @@ class Gimbal
     LibXR::Thread::Priority thread_priority;
     const char* euler_topic_name;  ///< 订阅的云台姿态欧拉角 Topic 名称
     const char* gyro_topic_name;   ///< 订阅的云台角速度 Topic 名称
+    const char* gimbal_cmd_topic_name;  ///< 订阅的云台控制命令 Topic 名称
   };
 
   /**
@@ -79,7 +80,7 @@ class Gimbal
       Motor& motor_pit,
       Motor& motor_yaw,
       Referee* referee,
-      const Param& param = {.task_stack_depth = 2048, .pid_yaw_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_yaw_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_pit_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pid_pit_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pit_max_angle = 0.0f, .pit_min_angle = 0.0f, .pit_lc = 0.0f, .pit_theta = 0.0f, .yaw_k = 0.0f, .j_pit = 0.0f, .j_yaw = 0.0f, .pit_zero = 0.0f, .yaw_zero = 0.0f, .patrol_range = 0.0f, .patrol_omega = 0.0f, .reverse_flag = true, .thread_priority = LibXR::Thread::Priority::MEDIUM, .euler_topic_name = "ahrs_euler", .gyro_topic_name = "bmi088_gyro"})
+      const Param& param = {.task_stack_depth = 2048, .pid_yaw_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_yaw_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_pit_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pid_pit_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pit_max_angle = 0.0f, .pit_min_angle = 0.0f, .pit_lc = 0.0f, .pit_theta = 0.0f, .yaw_k = 0.0f, .j_pit = 0.0f, .j_yaw = 0.0f, .pit_zero = 0.0f, .yaw_zero = 0.0f, .patrol_range = 0.0f, .patrol_omega = 0.0f, .reverse_flag = true, .thread_priority = LibXR::Thread::Priority::MEDIUM, .euler_topic_name = "ahrs_euler", .gyro_topic_name = "bmi088_gyro", .gimbal_cmd_topic_name = "gimbal_cmd"})
       : cmd_(cmd),
         pid_yaw_angle_(param.pid_yaw_angle),
         pid_yaw_omega_(param.pid_yaw_omega),
@@ -101,6 +102,7 @@ class Gimbal
         reverse_flag_(param.reverse_flag ? 1.0f : -1.0f),
         euler_topic_name_(param.euler_topic_name),
         gyro_topic_name_(param.gyro_topic_name),
+        gimbal_cmd_topic_name_(param.gimbal_cmd_topic_name),
         referee_(referee)
   {
     UNUSED(referee_);
@@ -149,7 +151,7 @@ class Gimbal
    */
   static void ThreadFunc(Gimbal* gimbal)
   {
-    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber("gimbal_cmd");
+    LibXR::Topic::ASyncSubscriber<CMD::GimbalCMD> cmd_suber(gimbal->gimbal_cmd_topic_name_);
     LibXR::Topic::ASyncSubscriber<LibXR::EulerAngle<float>> euler_suber(
         gimbal->euler_topic_name_);
     LibXR::Topic::ASyncSubscriber<Eigen::Matrix<float, 3, 1>> gyro_suber(
@@ -367,6 +369,7 @@ class Gimbal
   LibXR::MicrosecondTimestamp last_online_time_;
   const char* euler_topic_name_;
   const char* gyro_topic_name_;
+  const char* gimbal_cmd_topic_name_;
   Referee* referee_;
   LibXR::Thread thread_;
 
