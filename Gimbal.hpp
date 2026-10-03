@@ -2,7 +2,7 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: No description provided
+module_description: 云台控制模块：pitch / yaw 两轴的角度环与角速度环闭环控制 / Gimbal control Module with cascaded angle and angular-velocity loops on the pitch and yaw axes
 depends:
 - id: QDU-Robomaster/CMD
   ref: same-or-dev
@@ -276,7 +276,6 @@ class Gimbal
    */
   void Control()
   {
-    /*仅用于调试极性()*/
     this->torque_ = -this->pit_lc_ * sinf(euler_.Pitch() + this->pit_theta_);
     float out_pit = 0.0f;
     float out_yaw = 0.0f;
@@ -373,7 +372,6 @@ class Gimbal
   Referee* referee_;
   LibXR::Thread thread_;
 
-  /*----------工具函数--------------------------------*/
   /**
    * @brief Pitch轴角度限位
    *
@@ -464,8 +462,7 @@ class Gimbal
     {
       return;
     };
-    // 如果是在 SET_MODE_COMMON 和 SET_MODE_LOW_SENSITIVITY
-    // 之间切换，不重置任何变量
+    // SET_MODE_COMMON 与 SET_MODE_LOW_SENSITIVITY 之间切换时保持目标与 PID 状态
     if ((current_mode_ == GimbalEvent::SET_MODE_COMMON &&
          gimbal_event == GimbalEvent::SET_MODE_LOW_SENSITIVITY) ||
         (current_mode_ == GimbalEvent::SET_MODE_LOW_SENSITIVITY &&
