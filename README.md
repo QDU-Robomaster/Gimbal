@@ -72,7 +72,7 @@ Gimbal(CMD& cmd,
 - `j_pit`、`j_yaw`：pitch 与 yaw 的转动惯量，单位 kg·m²，用于前馈，默认 0。
 - `pit_zero`、`yaw_zero`：pitch 与 yaw 电机零点，单位 rad，默认 0。
 - `patrol_range`、`patrol_omega`：自动巡逻的 pitch 摆动幅度与角频率，默认 0。
-- `reverse_flag`：pitch 电机角与欧拉角同向时为 `true`，默认 `true`。
+- `reverse_flag`：pitch 电机角与欧拉角同向时为 `true`，默认 `false`。
 - `thread_priority`：线程优先级，默认 `LibXR::Thread::Priority::MEDIUM`。
 - `euler_topic_name`：订阅的姿态 Topic 名称，默认 `"ahrs_euler"`。
 - `gyro_topic_name`：订阅的角速度 Topic 名称，默认 `"bmi088_gyro"`。
@@ -96,7 +96,7 @@ Configuration parameters (`Param`; the PIDs are `LibXR::PID<float>::Param` with 
 - `j_pit`, `j_yaw`: pitch and yaw moments of inertia in kg·m², used for feedforward, default 0.
 - `pit_zero`, `yaw_zero`: pitch and yaw motor zero points in rad, default 0.
 - `patrol_range`, `patrol_omega`: pitch oscillation amplitude and angular frequency of the automatic patrol, default 0.
-- `reverse_flag`: `true` when the pitch motor angle and the Euler angle have the same direction, default `true`.
+- `reverse_flag`: `true` when the pitch motor angle and the Euler angle have the same direction, default `false`.
 - `thread_priority`: thread priority, default `LibXR::Thread::Priority::MEDIUM`.
 - `euler_topic_name`: name of the subscribed attitude Topic, default `"ahrs_euler"`.
 - `gyro_topic_name`: name of the subscribed angular-velocity Topic, default `"bmi088_gyro"`.

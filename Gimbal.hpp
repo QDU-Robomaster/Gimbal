@@ -165,7 +165,7 @@ class Gimbal
                                .yaw_zero = 0.0f,
                                .patrol_range = 0.0f,
                                .patrol_omega = 0.0f,
-                               .reverse_flag = true,
+                               .reverse_flag = false,
                                .thread_priority = LibXR::Thread::Priority::MEDIUM,
                                .euler_topic_name = "ahrs_euler",
                                .gyro_topic_name = "bmi088_gyro",
