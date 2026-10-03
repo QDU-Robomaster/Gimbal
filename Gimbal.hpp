@@ -30,50 +30,98 @@ depends:
 
 #define UI_GIMBAL_LAYER 3
 
+/// 云台最大角速度输入 (rad/s)
+/// Maximum angular-velocity input of the gimbal (rad/s)
 static constexpr float GIMBAL_MAX_SPEED = static_cast<float>(LibXR::TWO_PI) * 2.0f;
+
+/**
+ * @brief 云台模式事件。
+ *        Gimbal mode events.
+ */
 enum class GimbalEvent : uint8_t
 {
-  SET_MODE_RELAX,
-  SET_MODE_COMMON,
-  SET_MODE_AUTOPATROL,
-  SET_MODE_LOW_SENSITIVITY
+  SET_MODE_RELAX,  ///< 放松：失能电机，目标清零
+                   ///< Relax: motors disabled, targets cleared
+  SET_MODE_COMMON,  ///< 常规控制
+                    ///< Normal control
+  SET_MODE_AUTOPATROL,  ///< 自动巡逻
+                        ///< Automatic patrol
+  SET_MODE_LOW_SENSITIVITY  ///< 低灵敏度：操作员输入乘以 0.1
+                            ///< Low sensitivity: operator input scaled by 0.1
 };
 
+/**
+ * @brief 云台控制模块：pitch / yaw 两轴的角度环与角速度环闭环控制。
+ *        Gimbal control Module with cascaded angle and angular-velocity loops on the
+ *        pitch and yaw axes.
+ */
 class Gimbal
 {
  public:
+  /**
+   * @brief 云台配置参数。
+   *        Gimbal configuration parameters.
+   */
   struct Param
   {
-    uint32_t task_stack_depth;  ///< 任务堆栈深度
-    LibXR::PID<float>::Param pid_yaw_angle;  ///< Yaw轴角度环PID参数
-    LibXR::PID<float>::Param pid_yaw_omega;  ///< Yaw轴角速度环PID参数
-    LibXR::PID<float>::Param pid_pit_angle;  ///< Pitch轴角度环PID参数
-    LibXR::PID<float>::Param pid_pit_omega;  ///< Pitch轴角速度环PID参数
-    float pit_max_angle;  ///< Pitch轴最大角度
-    float pit_min_angle;  ///< Pitch轴最小角度
-    float pit_lc;  ///< Pitch质心距离(m)(距离水平向上为+)*Pitch质心重力(N)
-    float pit_theta;  ///< Pitch质心与重力轴线夹角(rad 极性自己猜)
-    float yaw_k;  ///< Yaw轴阻力系数
-    float j_pit;  ///< Pitch轴转动惯量
-    float j_yaw;  ///< Yaw轴转动惯量
-    float pit_zero;  ///< Pitch轴零点
-    float yaw_zero;  ///< Yaw轴零点
-    float patrol_range;
-    float patrol_omega;
-    bool reverse_flag;  ///< Pitch轴反转标志
-    LibXR::Thread::Priority thread_priority;
+    uint32_t task_stack_depth;  ///< 线程栈深
+    ///< Thread stack depth
+    LibXR::PID<float>::Param pid_yaw_angle;  ///< yaw 角度环 PID
+    ///< Yaw angle-loop PID
+    LibXR::PID<float>::Param pid_yaw_omega;  ///< yaw 角速度环 PID
+    ///< Yaw angular-velocity-loop PID
+    LibXR::PID<float>::Param pid_pit_angle;  ///< pitch 角度环 PID
+    ///< Pitch angle-loop PID
+    LibXR::PID<float>::Param pid_pit_omega;  ///< pitch 角速度环 PID
+    ///< Pitch angular-velocity-loop PID
+    float pit_max_angle;  ///< pitch 电机角度上限 (rad)，上下限均为 0 时不限位
+    ///< Pitch motor angle upper limit (rad); limiting is disabled when both limits are 0
+    float pit_min_angle;  ///< pitch 电机角度下限 (rad)
+    ///< Pitch motor angle lower limit (rad)
+    float pit_lc;  ///< pitch 质心距离 (m，水平向上为正) 乘以质心重力 (N)
+    ///< Pitch center-of-mass distance (m, positive upward from the horizontal) times its weight (N)
+    float pit_theta;  ///< pitch 质心与重力轴线夹角 (rad)
+    ///< Angle between the pitch center of mass and the gravity axis (rad)
+    float yaw_k;  ///< yaw 阻尼系数，乘以 yaw 电机角速度
+    ///< Yaw damping coefficient, multiplies the yaw motor angular velocity
+    float j_pit;  ///< pitch 转动惯量 (kg·m^2)
+    ///< Pitch moment of inertia (kg·m^2)
+    float j_yaw;  ///< yaw 转动惯量 (kg·m^2)
+    ///< Yaw moment of inertia (kg·m^2)
+    float pit_zero;  ///< pitch 电机零点 (rad)
+    ///< Pitch motor zero point (rad)
+    float yaw_zero;  ///< yaw 电机零点 (rad)
+    ///< Yaw motor zero point (rad)
+    float patrol_range;  ///< 自动巡逻的 pitch 摆动幅度
+    ///< Pitch oscillation amplitude of the automatic patrol
+    float patrol_omega;  ///< 自动巡逻的角频率，时间以 ms 计 (rad/ms)
+    ///< Angular frequency of the automatic patrol, time in ms (rad/ms)
+    bool reverse_flag;  ///< pitch 电机角与欧拉角同向为 true
+    ///< True when the pitch motor angle and the Euler angle have the same direction
+    LibXR::Thread::Priority thread_priority;  ///< 线程优先级
+    ///< Thread priority
     const char* euler_topic_name;  ///< 订阅的云台姿态欧拉角 Topic 名称
-    const char* gyro_topic_name;   ///< 订阅的云台角速度 Topic 名称
+    ///< Name of the subscribed gimbal Euler angle Topic
+    const char* gyro_topic_name;  ///< 订阅的云台角速度 Topic 名称
+    ///< Name of the subscribed gimbal angular velocity Topic
     const char* gimbal_cmd_topic_name;  ///< 订阅的云台控制命令 Topic 名称
+    ///< Name of the subscribed gimbal command Topic
   };
 
   /**
-   * @brief 构造函数初始化数据成员
+   * @brief 构造 Gimbal，创建控制线程并注册模式事件。
+   *        Construct Gimbal, create the control thread and register the mode events.
    *
-   * @param cmd 命令模块实例
-   * @param param Value configuration.
-   * @param motor_pit Pitch轴电机指针
-   * @param motor_yaw Yaw轴电机指针
+   * @param cmd 命令模块实例。
+   *            Command Module instance.
+   * @param motor_pit pitch 轴电机。
+   *                  Pitch axis motor.
+   * @param motor_yaw yaw 轴电机。
+   *                  Yaw axis motor.
+   * @param referee Referee 实例指针。
+   *                Pointer to a Referee instance.
+   * @param param 配置参数。
+   *              Configuration parameters.
    */
   Gimbal(
       CMD& cmd,
@@ -145,9 +193,12 @@ class Gimbal
   };
 
   /**
-   * @brief 线程函数
+   * @brief 控制线程函数：订阅命令、姿态与角速度，每 2 ms 执行一轮 Update、ParseCMD 与 Control。
+   *        Control thread function: subscribes to the command, attitude and angular
+   *        velocity Topics and runs Update, ParseCMD and Control every 2 ms.
    *
-   * @param gimbal Gimbal实例指针
+   * @param gimbal Gimbal 实例指针。
+   *               Pointer to the Gimbal instance.
    */
   static void ThreadFunc(Gimbal* gimbal)
   {
@@ -190,7 +241,9 @@ class Gimbal
   };
 
   /**
-   * @brief 更新电机反馈及状态
+   * @brief 刷新电机反馈与采样间隔，并发布 yaw、pitch 电机相对零点的角度。
+   *        Refresh the motor feedback and the sample interval, and publish the yaw and
+   *        pitch motor angles relative to their zero points.
    */
   void Update()
   {
@@ -211,7 +264,9 @@ class Gimbal
   }
 
   /**
-   * @brief 解析云台控制命令
+   * @brief 按 CMD 控制模式与云台模式解析命令，更新 yaw、pitch 目标及其导数。
+   *        Parse the command according to the CMD control mode and the gimbal mode, and
+   *        update the yaw and pitch targets and their derivatives.
    */
   void ParseCMD()
   {
@@ -272,7 +327,10 @@ class Gimbal
   }
 
   /**
-   * @brief 云台控制计算与输出
+   * @brief 限制 pitch 目标并计算两轴输出；RELAX 模式下电机 Relax，其他模式按电机状态使能、清错或以力矩模式下发。
+   *        Clamp the pitch target and compute both axis outputs; in RELAX mode the motors
+   *        are relaxed, otherwise they are enabled, cleared of errors or sent torque
+   *        commands depending on their state.
    */
   void Control()
   {
@@ -316,6 +374,14 @@ class Gimbal
     motor_control(motor_yaw_, motor_yaw_feedback_, yaw_motor_cmd);
   }
 
+  /**
+   * @brief 获取云台模式事件对象，激活 GimbalEvent 对应的事件 ID 即切换模式。
+   *        Get the gimbal mode event object; activating the event ID of a GimbalEvent
+   *        value switches the mode.
+   *
+   * @return 云台模式事件对象的引用。
+   *         Reference to the gimbal mode event object.
+   */
   LibXR::Event& GetEvent() { return gimbal_event_; }
 
  private:
@@ -373,14 +439,23 @@ class Gimbal
   LibXR::Thread thread_;
 
   /**
-   * @brief Pitch轴角度限位
+   * @brief 把 pitch 电机角度上下限换算为欧拉角范围，并限制 pitch 目标；上下限均为 0 时不限位。
+   *        Convert the pitch motor angle limits to an Euler angle range and clamp the
+   *        pitch target; limiting is disabled when both limits are 0.
    *
-   * @param target_pit 目标Pitch角度
-   * @param now_eulr_angle 当前Pitch欧拉角
-   * @param now_motor_angle 当前Pitch电机角度
-   * @param motor_max 电机最大角度
-   * @param motor_min 电机最小角度
-   * @param sign 方向符号
+   * @param target_pit 目标 pitch 角度 (rad)，被限幅后写回。
+   *                   Target pitch angle (rad), clamped in place.
+   * @param now_eulr_angle 当前 pitch 欧拉角 (rad)。
+   *                       Current pitch Euler angle (rad).
+   * @param now_motor_angle 当前 pitch 电机角度 (rad)。
+   *                        Current pitch motor angle (rad).
+   * @param motor_max 电机角度上限 (rad)。
+   *                  Motor angle upper limit (rad).
+   * @param motor_min 电机角度下限 (rad)。
+   *                  Motor angle lower limit (rad).
+   * @param sign 方向符号，电机角与欧拉角同向为 1，反向为 -1。
+   *             Direction sign, 1 when the motor angle and the Euler angle have the same
+   *             direction, -1 otherwise.
    */
   void PitchLimit(float& target_pit, float now_eulr_angle, float now_motor_angle,
                   float motor_max, float motor_min, float sign)
@@ -404,13 +479,20 @@ class Gimbal
   }
 
   /**
-   * @brief 解算PID控制输出
+   * @brief 解算两轴的力矩输出：角度环、角速度环、转动惯量前馈与补偿项。
+   *        Solve the torque outputs of both axes: angle loop, angular-velocity loop,
+   *        moment-of-inertia feedforward and compensation terms.
    *
-   * @param pit_output Pitch轴输出引用
-   * @param yaw_output Yaw轴输出引用
-   * @param target_pit_angle 目标Pitch角度
-   * @param target_yaw_angle 目标Yaw角度
-   * @param dt_ 时间间隔
+   * @param pit_output pitch 轴输出。
+   *                   Pitch axis output.
+   * @param yaw_output yaw 轴输出。
+   *                   Yaw axis output.
+   * @param target_pit_angle 目标 pitch 角度 (rad)。
+   *                         Target pitch angle (rad).
+   * @param target_yaw_angle 目标 yaw 角度 (rad)。
+   *                         Target yaw angle (rad).
+   * @param dt_ 控制周期 (s)。
+   *            Control period (s).
    */
   void Solve(float& pit_output, float& yaw_output, float target_pit_angle,
              const LibXR::CycleValue<float>& target_yaw_angle, float dt_)
@@ -435,13 +517,19 @@ class Gimbal
   }
 
   /**
-   * @brief 转动惯量前馈计算
+   * @brief 计算转动惯量前馈 J * (target_omega - last_omega) / dt。
+   *        Compute the moment-of-inertia feedforward J * (target_omega - last_omega) / dt.
    *
-   * @param target_omega 目标角速度
-   * @param last_omega 上一次角速度
-   * @param dt_ 时间间隔
-   * @param J 转动惯量 kg*m^2
-   * @return float 前馈值
+   * @param target_omega 目标角速度 (rad/s)。
+   *                     Target angular velocity (rad/s).
+   * @param last_omega 上一次的目标角速度 (rad/s)。
+   *                   Previous target angular velocity (rad/s).
+   * @param dt_ 控制周期 (s)。
+   *            Control period (s).
+   * @param J 转动惯量 (kg·m^2)。
+   *          Moment of inertia (kg·m^2).
+   * @return 前馈力矩。
+   *         Feedforward torque.
    */
   static float JFeedforward(float target_omega, float last_omega, float dt_, float J)
   {
@@ -452,9 +540,12 @@ class Gimbal
   }
 
   /**
-   * @brief 设置云台模式
+   * @brief 切换云台模式；RELAX 失能电机并清零目标，其他模式以当前姿态为目标并复位 PID。
+   *        Switch the gimbal mode; RELAX disables the motors and clears the targets, the
+   *        other modes take the current attitude as target and reset the PIDs.
    *
-   * @param gimbal_event 云台事件类型
+   * @param gimbal_event 目标模式。
+   *                     Target mode.
    */
   void SetMode(GimbalEvent gimbal_event)
   {
