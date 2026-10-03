@@ -133,7 +133,7 @@ An instance written by `xrobot instance add QDU-Robomaster/Gimbal`, with the dep
 ```yaml
 modules:
   - module: QDU-Robomaster/Gimbal
-    id: gimbal_0
+    id: gimbal
     args:
       - cmd: cmd
       - motor_pit: motor_pit
