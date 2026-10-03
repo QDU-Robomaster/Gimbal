@@ -40,12 +40,12 @@ static constexpr float GIMBAL_MAX_SPEED = static_cast<float>(LibXR::TWO_PI) * 2.
  */
 enum class GimbalEvent : uint8_t
 {
-  SET_MODE_RELAX,  ///< 放松：失能电机，目标清零
-                   ///< Relax: motors disabled, targets cleared
-  SET_MODE_COMMON,  ///< 常规控制
-                    ///< Normal control
-  SET_MODE_AUTOPATROL,  ///< 自动巡逻
-                        ///< Automatic patrol
+  SET_MODE_RELAX,           ///< 放松：失能电机，目标清零
+                            ///< Relax: motors disabled, targets cleared
+  SET_MODE_COMMON,          ///< 常规控制
+                            ///< Normal control
+  SET_MODE_AUTOPATROL,      ///< 自动巡逻
+                            ///< Automatic patrol
   SET_MODE_LOW_SENSITIVITY  ///< 低灵敏度：操作员输入乘以 0.1
                             ///< Low sensitivity: operator input scaled by 0.1
 };
@@ -79,7 +79,8 @@ class Gimbal
     float pit_min_angle;  ///< pitch 电机角度下限 (rad)
     ///< Pitch motor angle lower limit (rad)
     float pit_lc;  ///< pitch 质心距离 (m，水平向上为正) 乘以质心重力 (N)
-    ///< Pitch center-of-mass distance (m, positive upward from the horizontal) times its weight (N)
+    ///< Pitch center-of-mass distance (m, positive upward from the horizontal) times its
+    ///< weight (N)
     float pit_theta;  ///< pitch 质心与重力轴线夹角 (rad)
     ///< Angle between the pitch center of mass and the gravity axis (rad)
     float yaw_k;  ///< yaw 阻尼系数，乘以 yaw 电机角速度
@@ -123,12 +124,52 @@ class Gimbal
    * @param param 配置参数。
    *              Configuration parameters.
    */
-  Gimbal(
-      CMD& cmd,
-      Motor& motor_pit,
-      Motor& motor_yaw,
-      Referee* referee,
-      const Param& param = {.task_stack_depth = 2048, .pid_yaw_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_yaw_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = true}, .pid_pit_angle = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pid_pit_omega = {.k = 0.0f, .p = 0.0f, .i = 0.0f, .d = 0.0f, .i_limit = 0.0f, .out_limit = 0.0f, .cycle = false}, .pit_max_angle = 0.0f, .pit_min_angle = 0.0f, .pit_lc = 0.0f, .pit_theta = 0.0f, .yaw_k = 0.0f, .j_pit = 0.0f, .j_yaw = 0.0f, .pit_zero = 0.0f, .yaw_zero = 0.0f, .patrol_range = 0.0f, .patrol_omega = 0.0f, .reverse_flag = true, .thread_priority = LibXR::Thread::Priority::MEDIUM, .euler_topic_name = "ahrs_euler", .gyro_topic_name = "bmi088_gyro", .gimbal_cmd_topic_name = "gimbal_cmd"})
+  Gimbal(CMD& cmd, Motor& motor_pit, Motor& motor_yaw, Referee* referee,
+         const Param& param = {.task_stack_depth = 2048,
+                               .pid_yaw_angle = {.k = 0.0f,
+                                                 .p = 0.0f,
+                                                 .i = 0.0f,
+                                                 .d = 0.0f,
+                                                 .i_limit = 0.0f,
+                                                 .out_limit = 0.0f,
+                                                 .cycle = true},
+                               .pid_yaw_omega = {.k = 0.0f,
+                                                 .p = 0.0f,
+                                                 .i = 0.0f,
+                                                 .d = 0.0f,
+                                                 .i_limit = 0.0f,
+                                                 .out_limit = 0.0f,
+                                                 .cycle = true},
+                               .pid_pit_angle = {.k = 0.0f,
+                                                 .p = 0.0f,
+                                                 .i = 0.0f,
+                                                 .d = 0.0f,
+                                                 .i_limit = 0.0f,
+                                                 .out_limit = 0.0f,
+                                                 .cycle = false},
+                               .pid_pit_omega = {.k = 0.0f,
+                                                 .p = 0.0f,
+                                                 .i = 0.0f,
+                                                 .d = 0.0f,
+                                                 .i_limit = 0.0f,
+                                                 .out_limit = 0.0f,
+                                                 .cycle = false},
+                               .pit_max_angle = 0.0f,
+                               .pit_min_angle = 0.0f,
+                               .pit_lc = 0.0f,
+                               .pit_theta = 0.0f,
+                               .yaw_k = 0.0f,
+                               .j_pit = 0.0f,
+                               .j_yaw = 0.0f,
+                               .pit_zero = 0.0f,
+                               .yaw_zero = 0.0f,
+                               .patrol_range = 0.0f,
+                               .patrol_omega = 0.0f,
+                               .reverse_flag = true,
+                               .thread_priority = LibXR::Thread::Priority::MEDIUM,
+                               .euler_topic_name = "ahrs_euler",
+                               .gyro_topic_name = "bmi088_gyro",
+                               .gimbal_cmd_topic_name = "gimbal_cmd"})
       : cmd_(cmd),
         pid_yaw_angle_(param.pid_yaw_angle),
         pid_yaw_omega_(param.pid_yaw_omega),
