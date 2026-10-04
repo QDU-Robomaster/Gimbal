@@ -126,9 +126,9 @@ The subscribed Topic names match the names used by the publishing instances: `gi
 
 ## 5. 配置示例 / Configuration Example
 
-`xrobot instance add QDU-Robomaster/Gimbal` 写入的实例，依赖填写为其他 Module 实例的 id，PID、零点与限位按实机标定：
+`xrobot instance add QDU-Robomaster/Gimbal` 写入的实例，依赖填写为其他模块实例的 id，参数取自 bsp-dev-c 的 `User/RobotConfig/omni_infantry_3.yaml`：
 
-An instance written by `xrobot instance add QDU-Robomaster/Gimbal`, with the dependencies set to the ids of other Module instances, and the PIDs, zero points and limits calibrated on the machine:
+An instance written by `xrobot instance add QDU-Robomaster/Gimbal`, with the dependencies set to the ids of other Module instances and the parameters taken from `User/RobotConfig/omni_infantry_3.yaml` of bsp-dev-c:
 
 ```yaml
 modules:
@@ -138,62 +138,62 @@ modules:
       - cmd: cmd
       - motor_pit: motor_pit
       - motor_yaw: motor_yaw
-      - referee: nullptr
+      - referee: '&ref'
       - param:
-          task_stack_depth: 2048
+          task_stack_depth: 1536
           pid_yaw_angle:
             k: 1.0f
-            p: 8.0f
+            p: 14.0f
             i: 0.0f
             d: 0.0f
             i_limit: 0.0f
-            out_limit: 20.0f
+            out_limit: 0.0f
             cycle: true
           pid_yaw_omega:
             k: 1.0f
-            p: 0.5f
+            p: 4.8f
             i: 0.0f
             d: 0.0f
             i_limit: 0.0f
-            out_limit: 5.0f
-            cycle: true
+            out_limit: 0.0f
+            cycle: false
           pid_pit_angle:
             k: 1.0f
-            p: 10.0f
+            p: 13.5f
             i: 0.0f
             d: 0.0f
             i_limit: 0.0f
-            out_limit: 20.0f
-            cycle: false
+            out_limit: 0.0f
+            cycle: true
           pid_pit_omega:
             k: 1.0f
-            p: 0.6f
+            p: 3.58f
             i: 0.0f
-            d: 0.0f
+            d: 0.01f
             i_limit: 0.0f
-            out_limit: 5.0f
+            out_limit: 0.0f
             cycle: false
-          pit_max_angle: 0.5f
-          pit_min_angle: -0.3f
-          pit_lc: 0.2f
+          pit_max_angle: 0.16f
+          pit_min_angle: 5.75f
+          pit_lc: 0.0f
           pit_theta: 0.0f
           yaw_k: 0.0f
-          j_pit: 0.01f
-          j_yaw: 0.02f
-          pit_zero: 0.0f
-          yaw_zero: 0.0f
+          j_pit: 0.005f
+          j_yaw: 0.03f
+          pit_zero: 5.75f
+          yaw_zero: 2.8879559f
           patrol_range: 0.0f
           patrol_omega: 0.0f
           reverse_flag: true
-          thread_priority: LibXR::Thread::Priority::MEDIUM
-          euler_topic_name: "ahrs_euler"
-          gyro_topic_name: "bmi088_gyro"
+          thread_priority: LibXR::Thread::Priority::HIGH
+          euler_topic_name: "gimbal_euler"
+          gyro_topic_name: "gimbal_gyro"
           gimbal_cmd_topic_name: "gimbal_cmd"
 ```
 
-`cmd` 取自 `QDU-Robomaster/CMD` 实例，`motor_pit` 与 `motor_yaw` 取自 `QDU-Robomaster/DMMotor`（或其他 `Motor` 实现）实例，它们须在本实例之前列出。`referee` 填 `nullptr`，或填 `QDU-Robomaster/Referee` 实例的 id。
+`cmd` 取自 `QDU-Robomaster/CMD` 实例，`motor_pit` 与 `motor_yaw` 取自实现 `Motor` 接口的电机实例（该配置中分别为 `QDU-Robomaster/RMMotor` 与 `QDU-Robomaster/DMMotor` 实例），它们须在本实例之前列出。`referee` 填 `nullptr`，或填 `QDU-Robomaster/Referee` 实例；指针依赖写成 `'&id'`。
 
-`cmd` is taken from a `QDU-Robomaster/CMD` instance, and `motor_pit` and `motor_yaw` from `QDU-Robomaster/DMMotor` (or other `Motor` implementation) instances; they are listed before this instance. `referee` is `nullptr` or the id of a `QDU-Robomaster/Referee` instance.
+`cmd` is taken from a `QDU-Robomaster/CMD` instance, and `motor_pit` and `motor_yaw` from motor instances implementing the `Motor` interface (a `QDU-Robomaster/RMMotor` and a `QDU-Robomaster/DMMotor` instance in that configuration); they are listed before this instance. `referee` is `nullptr` or a `QDU-Robomaster/Referee` instance; pointer dependencies are written as `'&id'`.
 
 ## 6. 依赖与硬件 / Dependencies and Hardware
 
