@@ -214,3 +214,11 @@ Dependencies:
 - LibXR.
 
 Hardware: pitch and yaw motors implementing the `Motor` interface, and a gimbal IMU with attitude estimation that publishes the Euler angle and angular velocity Topics.
+
+
+## Standalone single-axis LQR (single_lqr branch)
+
+This branch adds `single_lqr.hpp` (`SingleLqr`), the MATLAB design script
+`tools/design_single_lqr.m`, and a standalone test. `Gimbal.hpp` and its default PID
+behavior are unchanged. The LQR is not wired into Gimbal yet. See
+[docs/single_lqr.md](docs/single_lqr.md) for the API, units, tuning and limitations.
