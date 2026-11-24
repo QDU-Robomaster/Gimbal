@@ -218,10 +218,10 @@ Hardware: pitch and yaw motors implementing the `Motor` interface, and a gimbal 
 
 ## Standalone single-axis LQR (single_lqr branch)
 
-This branch adds `single_lqr.hpp` (`SingleLqr`), the MATLAB design script
-`tools/design_single_lqr.m`, and a standalone test. `Gimbal.hpp` and its default PID
-behavior are unchanged. The LQR is not wired into Gimbal yet. See
-[docs/single_lqr.md](docs/single_lqr.md) for the API, units, tuning and limitations.
+[`single_lqr.hpp`](single_lqr.hpp) computes feedback torque from angle and rate
+errors. Use [`tools/design_single_lqr.m`](tools/design_single_lqr.m) to calculate
+the gains. The calling application supplies the errors and applies feedforward
+and motor limits. See [docs/single_lqr.md](docs/single_lqr.md) for the API and units.
 
 ## Standalone dual-yaw LQR
 
