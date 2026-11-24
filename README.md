@@ -222,3 +222,24 @@ This branch adds `single_lqr.hpp` (`SingleLqr`), the MATLAB design script
 `tools/design_single_lqr.m`, and a standalone test. `Gimbal.hpp` and its default PID
 behavior are unchanged. The LQR is not wired into Gimbal yet. See
 [docs/single_lqr.md](docs/single_lqr.md) for the API, units, tuning and limitations.
+
+## Standalone dual-yaw LQR
+
+[`DualYawLqr.hpp`](DualYawLqr.hpp) multiplies a 2×4 gain matrix by four
+reference-minus-measurement errors. The columns are big yaw angle, small yaw
+relative angle, big yaw rate, and small yaw relative rate. Angles are in rad
+and rates are in rad/s. The two rows return big and small yaw feedback torque
+in N·m. The application supplies the errors, any feedforward, and the motor
+limits.
+
+Open [`tools/design_dual_yaw_lqr.m`](tools/design_dual_yaw_lqr.m) in MATLAB
+with Control System Toolbox. Enter the inertias, damping, sample period,
+and Q/R for your system. If the identified big yaw inertia includes the
+small stage moving with it, set `big_inertia_includes_small = true`.
+Run the script to check the discrete closed-loop poles and print `k11`
+through `k24`. Copy the gains to `DualYawLqr::Param` or the corresponding
+fields in your application's YAML, then pass the four errors to
+`DualYawLqr::Calculate`.
+
+The standalone matrix multiplication test is in
+[`tests/test_dual_yaw_lqr.cpp`](tests/test_dual_yaw_lqr.cpp).
