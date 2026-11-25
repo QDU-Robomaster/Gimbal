@@ -34,4 +34,4 @@ for row = 1:2
         fprintf('          k%d%d: %.9f\n', row, col, K(row, col));
     end
 end
-% Copy the printed k11 through k24 into DualYawLqr::Param or your app's YAML.
+% Copy the printed k11 through k24 into DoubleYaw::Param or your app's YAML.

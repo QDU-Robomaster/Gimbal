@@ -4,8 +4,6 @@
 #include <cmath>
 #include <cstdint>
 
-#include "DualYawLqr.hpp"
-
 // Coupled yaw tracking with a caller-supplied small-axis feedforward.
 class DoubleYaw {
  public:
@@ -28,6 +26,25 @@ class DoubleYaw {
     float small_margin = 0.08f;
     bool big_reference_ramp = true;
   };
+
+  struct Torque {
+    float big;
+    float small;
+  };
+
+  // Angles in rad, rates in rad/s. Returns joint feedback torques in N m.
+  static constexpr Torque CalculateFeedback(const Param& K,
+                                            float big_angle_error,
+                                            float small_angle_error,
+                                            float big_rate_error,
+                                            float small_rate_error) {
+    return {
+        K.k11 * big_angle_error + K.k12 * small_angle_error +
+            K.k13 * big_rate_error + K.k14 * small_rate_error,
+        K.k21 * big_angle_error + K.k22 * small_angle_error +
+            K.k23 * big_rate_error + K.k24 * small_rate_error,
+    };
+  }
 
   struct Input {
     float aim_error;       ///< Target minus measured IMU yaw, wrapped in rad.
@@ -199,9 +216,8 @@ class DoubleYaw {
     const float BIG_RATE_ERROR = big_ref_rate_ - BIG_RATE;
     small_rate_ = AIM_RATE - BIG_RATE;
     const float SMALL_RATE_ERROR = small_ref_rate_ - small_rate_;
-    const auto FEEDBACK_TORQUE = DualYawLqr::Calculate(
-        {P.k11, P.k12, P.k13, P.k14, P.k21, P.k22, P.k23, P.k24}, big_error_,
-        small_error_, BIG_RATE_ERROR, SMALL_RATE_ERROR);
+    const auto FEEDBACK_TORQUE = CalculateFeedback(
+        P, big_error_, small_error_, BIG_RATE_ERROR, SMALL_RATE_ERROR);
     torque_big_lqr_ = FEEDBACK_TORQUE.big;
     torque_small_lqr_ = FEEDBACK_TORQUE.small;
     small_feedforward_torque_ = feedforward(
