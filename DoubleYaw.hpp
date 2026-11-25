@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 // Coupled yaw tracking with a caller-supplied small-axis feedforward.
 class DoubleYaw {
@@ -25,6 +26,9 @@ class DoubleYaw {
     float big_max_rate = 0.65f;
     float small_margin = 0.08f;
     bool big_reference_ramp = true;
+    float small_center_position = 0;
+    float small_recenter_error = 0;
+    float small_recenter_rate = 0.15f;
   };
 
   struct Torque {
@@ -107,10 +111,11 @@ class DoubleYaw {
   // An interruption invalidates torque without moving the travel origin.
   void Suspend() {
     target_reachable_ = false;
+    small_center_ref_.reset();
     big_ref_ = big_position_;
     big_torque_ = small_torque_ = 0;
     torque_big_lqr_ = torque_small_lqr_ = small_feedforward_torque_ = 0;
-    big_ref_rate_ = small_ref_rate_ = 0;
+    small_ref_rate_ = 0;
     aim_error_ = big_error_ = small_error_ = 0;
     big_saturated_ = small_saturated_ = false;
   }
@@ -156,7 +161,10 @@ class DoubleYaw {
                             P.big_torque_limit,
                             P.small_torque_limit,
                             P.big_max_travel,
-                            P.small_margin};
+                            P.small_margin,
+                            P.small_center_position,
+                            P.small_recenter_error,
+                            P.small_recenter_rate};
     for (const float VALUE : VALUES) {
       if (!std::isfinite(VALUE)) {
         Suspend();
@@ -170,6 +178,8 @@ class DoubleYaw {
         std::fabs(P.big_direction) != 1 || std::fabs(P.imu_direction) != 1 ||
         P.big_torque_limit <= 0 || P.small_torque_limit <= 0 ||
         P.big_max_travel <= 0 || INVALID_RAMP || P.small_margin <= 0 ||
+        P.small_recenter_error < 0 ||
+        (P.small_recenter_error > 0 && P.small_recenter_rate <= 0) ||
         input.max_position - input.min_position <= 2 * P.small_margin) {
       Suspend();
       return false;
@@ -189,20 +199,41 @@ class DoubleYaw {
     constexpr float ANGLE_TOLERANCE = 1e-5f;
     target_reachable_ = AIM_TARGET >= BIG_MIN + SMALL_MIN - ANGLE_TOLERANCE &&
                         AIM_TARGET <= BIG_MAX + SMALL_MAX + ANGLE_TOLERANCE;
-    // Each joint can reduce the same live pointing error within its own travel.
-    big_goal_ = std::clamp(BIG_POSITION + AIM_ERROR, BIG_MIN, BIG_MAX);
+    // Limit the centering target to positions where both joints can hold aim.
+    const float CENTER_MIN = std::max(SMALL_MIN, AIM_TARGET - BIG_MAX);
+    const float CENTER_MAX = std::min(SMALL_MAX, AIM_TARGET - BIG_MIN);
+    float recenter_offset = 0;
+    if (std::fabs(AIM_ERROR) < P.small_recenter_error &&
+        CENTER_MIN <= CENTER_MAX) {
+      const float CENTER =
+          std::clamp(P.small_center_position, CENTER_MIN, CENTER_MAX);
+      const float PREVIOUS = small_center_ref_.value_or(input.small_position);
+      const float STEP = P.small_recenter_rate * input.dt;
+      const float CENTER_REF =
+          std::clamp(CENTER, PREVIOUS - STEP, PREVIOUS + STEP);
+      small_center_ref_ = CENTER_REF;
 
-    const float DELTA = big_goal_ - big_ref_;
-    if (P.big_reference_ramp && std::fabs(DELTA) > P.big_max_rate * input.dt) {
-      big_ref_rate_ = std::copysign(P.big_max_rate, DELTA);
+      const float BLEND = 1.0f - std::fabs(AIM_ERROR) / P.small_recenter_error;
+      const float WEIGHT = BLEND * BLEND * (3.0f - 2.0f * BLEND);
+      recenter_offset = WEIGHT * (input.small_position - CENTER_REF);
+    } else {
+      small_center_ref_.reset();
+    }
+
+    // Opposite centering corrections preserve the total pointing reference.
+    big_goal_ = std::clamp(BIG_POSITION + AIM_ERROR + recenter_offset, BIG_MIN,
+                           BIG_MAX);
+
+    if (P.big_reference_ramp) {
+      const float MAX_STEP = P.big_max_rate * input.dt;
       big_ref_ =
-          std::clamp(big_ref_ + big_ref_rate_ * input.dt, BIG_MIN, BIG_MAX);
+          std::clamp(big_goal_, big_ref_ - MAX_STEP, big_ref_ + MAX_STEP);
     } else {
       big_ref_ = big_goal_;
-      big_ref_rate_ = 0;
     }
     big_error_ = big_ref_ - BIG_POSITION;
-    const float REQUESTED_SMALL = input.small_position + AIM_ERROR;
+    const float REQUESTED_SMALL =
+        input.small_position + AIM_ERROR - recenter_offset;
     small_ref_ = std::clamp(REQUESTED_SMALL, SMALL_MIN, SMALL_MAX);
     small_error_ = small_ref_ - input.small_position;
     // The small joint reference follows the pointing target relative to the
@@ -213,11 +244,11 @@ class DoubleYaw {
         (small_ref_ >= SMALL_MAX && small_ref_rate_ > 0))
       small_ref_rate_ = 0;
 
-    const float BIG_RATE_ERROR = big_ref_rate_ - BIG_RATE;
     small_rate_ = AIM_RATE - BIG_RATE;
     const float SMALL_RATE_ERROR = small_ref_rate_ - small_rate_;
-    const auto FEEDBACK_TORQUE = CalculateFeedback(
-        P, big_error_, small_error_, BIG_RATE_ERROR, SMALL_RATE_ERROR);
+    // Big yaw uses a zero angular-velocity reference.
+    const auto FEEDBACK_TORQUE = CalculateFeedback(P, big_error_, small_error_,
+                                                   -BIG_RATE, SMALL_RATE_ERROR);
     torque_big_lqr_ = FEEDBACK_TORQUE.big;
     torque_small_lqr_ = FEEDBACK_TORQUE.small;
     small_feedforward_torque_ = feedforward(
@@ -250,13 +281,14 @@ class DoubleYaw {
   float big_position_ = 0, big_rate_ = 0;
   float aim_error_ = 0, big_error_ = 0, small_error_ = 0;
   float big_goal_ = 0, big_ref_ = 0, small_ref_ = 0;
-  float big_ref_rate_ = 0, small_ref_rate_ = 0, small_rate_ = 0;
+  float small_ref_rate_ = 0, small_rate_ = 0;
   float torque_big_lqr_ = 0, torque_small_lqr_ = 0;
   float small_feedforward_torque_ = 0;
   float big_torque_ = 0, small_torque_ = 0;
 
  private:
   float big_center_ = 0;
+  std::optional<float> small_center_ref_;
   float last_big_scale_ = 0;
   std::uint64_t last_big_sample_us_ = 0;
   bool initialized_ = false;
