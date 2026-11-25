@@ -243,3 +243,25 @@ fields in your application's YAML, then pass the four errors to
 
 The standalone matrix multiplication test is in
 [`tests/test_dual_yaw_lqr.cpp`](tests/test_dual_yaw_lqr.cpp).
+
+## 独立双 yaw 控制器
+
+[DoubleYaw.hpp](DoubleYaw.hpp) 根据总指向误差和两轴反馈计算各自的参考角与参考速度，
+调用 `DualYawLqr::Calculate` 求两轴力矩，再应用力矩和行程限幅。两个头文件可直接用于
+C++17 工程，依赖 C++ 标准库。
+
+1. 使用 [MATLAB 脚本](tools/design_dual_yaw_lqr.m) 根据装置的 J、B、采样周期和 Q/R 求 K。
+   将 `k11` 到 `k24` 填入 `DoubleYaw::Param`，并配置大轴编码器方向和比例、IMU 方向以及两轴限幅。
+2. 每次取得大轴位置反馈时调用 `UpdateBigFeedback(raw_position, sample_us)`。
+   时间戳单位为 µs，重复时间戳会跳过。角速度由连续两帧位置差分后低通估计。
+3. 每拍填 `DoubleYaw::Input` 并调用 `Calculate(input)`。
+   `aim_error` 为 IMU 坐标下环绕到 ±π 的目标减实测角度，`aim_rate` 为 IMU 总指向的实测角速度。
+   `small_position`、`min_position`、`max_position` 使用同一小轴编码器坐标，正方向与校准后的 IMU yaw 一致。
+   固定角度目标可将 `target_rate` 和 `target_accel` 填 0。角度用 rad，速度用 rad/s，`dt` 用秒。
+4. 成功返回后读取 `big_torque_` 和 `small_torque_`（N·m）。大轴力矩乘以 `big_direction`
+   转回电机指令方向。反馈超时等状态由调用方处理，暂停时调用 `Suspend()` 并停止跟踪力矩，
+   需要重新记录大轴行程中心时调用 `Reset()`。
+
+带前馈时用 `Calculate(input, small_feedforward)`。回调接收 `DoubleYaw::SmallYawReference`，
+并返回小轴前馈力矩。回调输出在做力矩和位置限幅前加入小轴 LQR 输出。
+调用示例和限幅验证见 [tests/test_double_yaw.cpp](tests/test_double_yaw.cpp)。
